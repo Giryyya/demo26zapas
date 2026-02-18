@@ -713,3 +713,18 @@ rm resolv.conf~
 
 
  </details>
+
+##  Настройте часовой пояс на всех устройствах согласно месту проведения экзамена
+
+<details>
+    <summary>НАЖМИ</summary>
+ 
+Задавать часовой пояс будем с помощью утилию timedatetcl:
+```
+timedatectl set-timezone Europe/Moscow
+timedatectl
+```
+
+Сами зоны расположены по пути /usr/share/zoneinfo/
+
+ </details>
