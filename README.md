@@ -665,6 +665,7 @@ chown root:named /etc/bind/zone/2.168.192.in-addr.arpa.db
 
 <img width="883" height="716" alt="image" src="https://github.com/user-attachments/assets/70c19ee1-57a3-4c7e-9d83-bc942ac153a1" />
 
+###  ВАЖНО!!! Я добавил в зону прямого просмотра все устройства кроме ISP и сделал обратные зоны для всех устройств в подсетях 1.0 и 2.0. Смотрите задание, там могут быть другие условия.
 Проверяем зоны:
 ```
 named-checkconf -z
@@ -726,5 +727,182 @@ timedatectl
 ```
 
 Сами зоны расположены по пути /usr/share/zoneinfo/
+
+ </details>
+
+# Модуль 2
+
+## Настройте контроллер домена Samba DC на сервере BR-SRV
+
+<details>
+    <summary>ЗАДАНИЕ</summary>
+ 
+Имя домена au-team.irpo 
+
+• Введите в созданный домен машину HQ-CLI
+
+• Создайте 5 пользователей для офиса HQ: имена пользователей формата 
+hquser№ (например hquser1, hquser2 и т.д.) 
+
+• Создайте группу hq, введите в группу созданных пользователей 
+
+• Убедитесь, что пользователи группы hq имеют право 
+аутентифицироваться на HQ-CLI 
+
+• Пользователи группы hq должны иметь возможность повышать 
+привилегии для выполнения ограниченного набора команд: cat, grep, id. 
+Запускать другие команды с повышенными привилегиями пользователи 
+группы права не имеют.
+
+ </details>
+
+<details>
+    <summary>НАЖМИ</summary>
+ 
+### Не факт что работает и по хорошему при установке альта поставить все что связано с доменами, у меня только там смогло зайти в юзера
+
+Устанавливаем необходимые пакеты:
+```
+apt update
+apt install samba-dc samba-winbind krb5-kdc chrony iptables
+```
+Редактируем хрони /etc/chrony.conf:
+```
+server pool.ntp.org iburst
+```
+Перезапускаем хрони:
+```
+systemctl enable --now chronyd
+```
+Останавливаем стандартные службы самбы, если запущены:
+```
+systemctl stop smbd nmbd winbind
+systemctl disable smbd nmbd winbind
+```
+Создаем домен:
+```
+rm /etc/samba/smb.conf
+samba-tool domain provision --use-rfc2307 --interactive
+```
+```
+Realm: AU.TEAM
+Domain: AU
+Server Role: dc
+DNS backend: SAMBA_INTERNAL 
+DNS forwarder: 192.168.1.62 
+Administrator password: P@ssw0rd 
+```
+Запускаем самбу (сначала нужно ребутнуть сервер, иначе будут ошибки):
+```
+systemctl enable --now samba
+```
+Открываем порты в iptables (на роутерах):
+```
+iptables -A INPUT -p tcp -m multiport --dports 53,88,135,139,389,445,464,636 -j ACCEPT
+iptables -A INPUT -p udp -m multiport --dports 53,88,123,137,138,389,464 -j ACCEPT
+iptables-save > /etc/iptables/rules.v4
+```
+Проверяем домен на работоспособность:
+```
+samba-tool domain level show
+samba-tool user list
+```
+
+<img width="488" height="280" alt="image" src="https://github.com/user-attachments/assets/5867b327-4629-4271-8289-c4c75df2a0a2" />
+
+Создаем группу hq:
+```
+samba-tool group add hq
+```
+Создаеми юзеров:
+```
+for i in {1..5}; do
+  samba-tool user create hquser$i 'P@ssw0rd'
+  samba-tool group addmembers hq hquser$i
+done
+```
+Проверяем группу:
+```
+samba-tool group listmembers hq
+```
+
+<img width="428" height="111" alt="image" src="https://github.com/user-attachments/assets/8d022e52-ef35-4bc3-b473-9dc2cd3ba69a" />
+
+### Далее необходимо завести машины в домен:
+
+Проверяем /etc/resolv.conf:
+```
+search au.team
+nameserver 192.168.2.14
+nameserver 192.168.1.62
+```
+Проверяем доступность:
+```
+ping au.team
+nslookup _ldap._tcp.au.team
+```
+Устанавливаем пакеты (Если при установке выбрали все что связано с доменами, то не нужно, если нет графики, то нужно):
+```
+apt-get install realmd sssd sssd-tools adcli krb5-workstation samba-common-tools
+```
+
+Заходим в центр управления системой:
+
+<img width="724" height="475" alt="image" src="https://github.com/user-attachments/assets/585bda4f-6b83-4850-88ad-6258d6c5913c" />
+
+Ищем кнопку аутентификация:
+
+<img width="1233" height="704" alt="image" src="https://github.com/user-attachments/assets/81c96671-a630-4ab7-a3c5-52997d9acb4c" />
+
+Вводим все как на скрине в Active Directory и жмем кнопку применить снизу, система попросит ввести учетку админа домена
+
+<img width="1284" height="739" alt="image" src="https://github.com/user-attachments/assets/e9de9b3a-3e0f-4586-90a8-813e04cb8595" />
+
+### на устройствах без графики:
+
+После установки пакетов обнаруживаем домен:
+```
+realm discover au.team
+```
+Заходим в домен:
+```
+realm join -U Administrator au.team
+```
+### Настраиваем группу hq на hq-cli:
+Задаем права на sudo:
+```
+chown root:root /usr/bin/sudo
+chmod 4755 /usr/bin/sudo
+ls -l /usr/bin/sudo
+```
+Вывод должен быть следующий:
+
+<img width="487" height="44" alt="image" src="https://github.com/user-attachments/assets/26a66c8c-591e-47c4-bc9d-9f31fa7c308b" />
+
+!!!Нужно обратить вниманию на букву s на 4 позиции!!!
+
+Проверяем пути к командам:
+```
+which cat grep id
+```
+Редактируем /etc/sudoers:
+```
+%hq ALL=(ALL) /usr/bin/cat, /bin/grep, /usr/bin/id
+```
+Заходим под hquser1:
+```
+su - hquser1
+```
+Проверяем команды:
+```
+sudo cat /etc/hostname
+sudo grep root /etc/passwd
+sudo id
+```
+Если не работает, то в /etc/sudoers прописываем другие настройки (предыдущую строчку удалить):
+```
+Cmnd_Alias HQ_COMMANDS = /bin/cat, /bin/grep, /usr/bin/id
+%hq ALL=(ALL) HQ_COMMANDS
+```
 
  </details>
