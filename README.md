@@ -68,7 +68,7 @@ startx
     <summary>ЗАДАНИЕ</summary>
    
 • IP-адрес должен быть из приватного диапазона, в случае, если сеть 
-локальная, согласно RFC1918 
+локальная, согласно RFC1918 (10.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12)
    
 • Локальная сеть в сторону HQ-SRV(VLAN 100) должна вмещать не 
 более 32 адресов 
@@ -406,7 +406,6 @@ Protocol 2
 Прописываем правила для ssh в iptables на всех роутерах:
 ```
 iptables -A INPUT -p tcp --dport 2026 -j ACCEPT
-iptables -A INPUT -p tcp --dport 22 -j DROP
 sysctl -p
 iptables-save>/etc/iptables/rules.v4
 ``` 
@@ -906,3 +905,627 @@ Cmnd_Alias HQ_COMMANDS = /bin/cat, /bin/grep, /usr/bin/id
 ```
 
  </details>
+
+## Сконфигурируйте файловое хранилище на сервере HQ-SRV
+
+<details>
+    <summary>ЗАДАНИЕ</summary>
+ 
+При помощи двух подключенных к серверу дополнительных дисков 
+размером 1 Гб сконфигурируйте дисковый массив уровня 0 
+
+• Имя устройства – md0, при необходимости конфигурация массива 
+размещается в файле /etc/mdadm.conf 
+
+• Создайте раздел, отформатируйте раздел, в качестве файловой системы 
+используйте ext4 
+
+• Обеспечьте автоматическое монтирование в папку /raid
+
+ </details>
+
+ <details>
+    <summary>НАЖМИ</summary>
+ 
+Подключаем диски через Vmware:
+
+<img width="342" height="310" alt="image" src="https://github.com/user-attachments/assets/36c77e6f-324c-475c-8cfd-dc4909c79dca" />
+
+Устанавливаем mdadm:
+```
+apt-get install mdadm -y
+```
+Смотрим какие диски у нас имеются:
+```
+lsblk
+```
+
+<img width="619" height="147" alt="image" src="https://github.com/user-attachments/assets/c927e347-a2a6-41cf-a2ef-5d9dea7bb214" />
+
+Далее создаем разделы у дисков:
+```
+cfdisk /dev/sdb
+```
+
+Выбираем gpt:
+
+<img width="757" height="520" alt="image" src="https://github.com/user-attachments/assets/e6fda1aa-29c7-4b1c-b612-1fd0b35ef848" />
+
+Жмем кнопку New:
+
+<img width="1069" height="744" alt="image" src="https://github.com/user-attachments/assets/6d22b1a9-4e9a-4cb6-b68a-d3769d30f8e8" />
+
+Выбираем максимальный размер:
+
+<img width="1097" height="741" alt="image" src="https://github.com/user-attachments/assets/138f761c-3aab-4471-9556-db7347c3e6c9" />
+
+Записываем изменения (рулить в утилите на стрелочки):
+
+<img width="1096" height="750" alt="image" src="https://github.com/user-attachments/assets/5953107b-1436-4179-b8f1-bfc79883e76f" />
+
+Полностью прописываем yes:
+
+<img width="877" height="276" alt="image" src="https://github.com/user-attachments/assets/d7c400f2-fb05-4cf7-a307-fda30e30a49a" />
+
+По итогу должно получиться так:
+
+<img width="633" height="201" alt="image" src="https://github.com/user-attachments/assets/7ae1694f-065c-479d-92cc-def149e2df1b" />
+ 
+Создаем массив md0 0 уровня:
+```
+mdadm --create --verbose /dev/md0 -l 0 -n 2 /dev/sdb1 /dev/sdc1
+```
+
+Проверяем:
+
+<img width="656" height="213" alt="image" src="https://github.com/user-attachments/assets/b1c550d2-5b0b-43a1-8466-aaa8559a87eb" />
+
+Создаем таблицу раздела:
+```
+mkfs -t ext4 /dev/md0
+```
+Сохраняем конфигураци:
+```
+mdadm --detail --scan --verbose /dev/md0 > /etc/mdadm.conf
+```
+Монтируем массив:
+```
+echo '/dev/md0 /raid ext4 defaults 0 0' >> /etc/fstab
+mount /dev/md0 /raid
+```
+ </details>
+
+ ## Настройте сервер сетевой файловой системы (nfs) на HQ-SRV
+
+ <details>
+    <summary>ЗАДАНИЕ</summary>
+ 
+В качестве папки общего доступа выберите /raid/nfs, доступ для чтения и записи исключительно для сети в сторону HQ-CLI 
+
+• На HQ-CLI настройте автомонтирование в папку /mnt/nfs 
+
+• Основные параметры сервера отметьте в отчёте
+
+ </details>
+
+  <details>
+    <summary>НАЖМИ</summary>
+
+### На сервере: 
+Создаем папку в /raid:
+```
+mkdir /raid/nfs
+```
+Скачиваем nfs:
+```
+apt-get install nfs-utils
+```
+В файле /etc/exports добавляем строчку:
+```
+/raid/nfs 192.168.1.0/26(rw,sync,no_root_squash,subtree_check)
+```
+Запускаем nfs:
+```
+systemctl enable --now nfs-server
+```
+Проверяем появилась ли папка:
+```
+exportfs
+```
+
+<img width="271" height="62" alt="image" src="https://github.com/user-attachments/assets/491f2649-93c5-4de1-91ed-91636d116fbd" />
+
+Если не появилась - еще раз ребутаем nfs.
+
+### На клиенте:
+Устанавливаем nfs:
+```
+nfs-utils
+```
+Создаем папку:
+```
+mkdir /mnt/nfs
+```
+Монтируем папку:
+```
+mount -t nfs 192.168.1.62:/raid/nfs /mnt/nfs
+```
+Настраиваем автоматическое монтирование:
+```
+echo '192.168.1.62:/raid/nfs /mnt/nfs nfs auto 0 0 ' >> /etc/fstab
+```
+
+ </details>
+
+ ## Настройте службу сетевого времени на базе сервиса chrony на маршрутизаторе ISP
+
+ <details>
+    <summary>ЗАДАНИЕ</summary>
+ 
+Вышестоящий сервер ntp на маршрутизаторе ISP - на выбор участника 
+
+• Стратум сервера - 5 
+
+• В качестве клиентов ntp настройте: HQ-SRV, HQ-CLI, BR-RTR, BR-SRV.
+
+ </details>
+
+ <details>
+    <summary>НАЖМИ</summary>
+ 
+Настраиваем маршрутизацию до ISP:
+### ISP:
+Устанавливаем frr:
+```
+apt-get install frr -y
+```
+Включаем OSPF в конфиге /etc/frr/daemons:
+
+<img width="863" height="684" alt="image" src="https://github.com/user-attachments/assets/889ab48a-5ad0-45ea-ae7e-e93045da4910" />
+
+Запускаем frr:
+```
+systemctl enable --now frr
+```
+Переходим в консоль frr:
+```
+vtysh
+```
+Настраиваем настройки в терминале:
+```
+conf t
+router ospf
+passive-interface default
+network 192.168.1.0/26 area 0
+network 192.168.2.0/28 area 0
+network 10.10.10.0/30 area 0
+network 172.16.1.0/28 area 0
+network 172.16.2.0/28 area 0
+area 0 authentication
+exit
+```
+Настраиваем интерфейсы(ens37, ens38):
+```
+interface ens37
+no ip ospf network broadcast
+no ip ospf passive
+ip ospf authentication
+ip ospf authentication-key password
+exit
+```
+Не забываем сохранить изменения (как в циске):
+```
+write
+```
+Перезапускаем frr:
+```
+systemctl restart frr
+```
+### HQ-RTR и BR-RTR:
+
+В frr необходимо добавить сети ISP:
+```
+vtysh
+conf t
+router ospf
+network 172.16.1.0/28 area 0
+network 172.16.2.0/28 area 0
+ex
+interface ens33
+no ip ospf network broadcast
+no ip ospf passive
+ip ospf authentication
+ip ospf authentication-key password
+exit
+do wr
+```
+Перезапускаем frr:
+```
+systemctl restart frr
+```
+### Настраиваем chrony на ISP:
+
+Устанавливаем Chrony:
+```
+apt-get install chrony -y
+```
+Редактируем Файл /etc/chrony.conf:
+```
+server 127.0.0.1 iburst prefer
+local stratum 5
+allow 192.168.1.0/26
+allow 192.168.2.0/28
+```
+Должно выглядеть так:
+
+<img width="852" height="228" alt="image" src="https://github.com/user-attachments/assets/14fe6b26-2773-47d9-afcd-d3155e7efc76" />
+
+Перезазгружаем Chrony:
+```
+systemctl restart chronyd
+```
+### На клиенте:
+Устанавливаем Chrony:
+```
+apt-get install chrony -y
+```
+Редачим /etc/chrony.conf (192.168.189.131 - IP на ISP который смотрит в сеть):
+```
+server 192.168.189.131 iburst
+```
+Перезапускаем Chrony:
+```
+systemctl restart chronyd
+```
+Проверяем:
+```
+chronyc sources
+```
+
+Если стратум не 5, то можно попробовать поставить ntp вместо chrony:
+```
+apt-get install ntp
+vim /etc/ntp.conf
+```
+Указываем:
+```
+server 127.127.1.0
+server ntp2.vniiftri.ru iburst
+fudge 127.127.1.0 stratum 5
+restrict 192.168.11.0 mask 255.255.255.0 nomodify notrap
+restrict 192.168.33.0 mask 255.255.255.0 nomodify notrap
+```
+Запускаем и проверяем:
+```
+systemctl enable ntp
+systemctl start ntp
+ntpq -p
+```
+ </details>
+
+## Сконфигурируйте ansible на сервере BR-SRV
+
+ <details>
+    <summary>ЗАДАНИЕ</summary>
+ 
+Сформируйте файл инвентаря, в инвентарь должны входить HQ-SRV, HQ-CLI, HQ-RTR и BR-RTR 
+
+• Рабочий каталог ansible должен располагаться в /etc/ansible 
+
+• Все указанные машины должны без предупреждений и ошибок отвечать 
+pong на команду ping в ansible посланную с BR-SRV.
+
+ </details>
+
+  <details>
+    <summary>НАЖМИ</summary>
+ 
+Устанавливаем Ansible:
+```
+apt-get install ansible -y
+```
+Заходим под sshuser и генерируем ключи, которые будут расположены в /home/sshuser/.ssh:
+```
+ssh -p 2026 sshuser@192.168.2.14
+ssh-keygen
+```
+Отправляем открытый ключ на другие хосты (Для начала необходимо настроить ssh где не настроен) (Смотрите на порты, у меня по итогу не оч заработало если везде 2026):
+```
+ssh-copy-id -p 2026 sshuser@192.168.1.62
+ssh-copy-id -p 2026 sshuser@192.168.1.3
+ssh-copy-id -p 2026 sshuser@192.168.2.1
+ssh-copy-id -p 2026 sshuser@192.168.1.1
+```
+Создаем файл инвентаря и вносим туда хосты /etc/ansible/hosts:
+```
+[hq]
+192.168.1.1 ansible_port=2026 ansible_user=sshuser ansible_python_interpreter=/usr/bin/python3 ansible_connection=local
+192.168.1.3 ansible_port=2026 ansible_user=sshuser ansible_python_interpreter=/usr/bin/python3
+192.168.1.62 ansible_port=2026 ansible_user=sshuser ansible_python_interpreter=/usr/bin/python3
+
+[br]
+192.168.2.1 ansible_port=2026 ansible_user=sshuser ansible_python_interpreter=/usr/bin/python3
+```
+### Если будут возникать ошибки формата как на скрине, то каждому хосту прописываем параметр ansible_connection=local:
+
+<img width="1703" height="525" alt="image" src="https://github.com/user-attachments/assets/6ca8ad75-4aa3-4d79-951a-e93fb83f14c0" />
+
+Редактируем конфиг /etc/ansible/ansible.cfg:
+```
+[defaults]
+interpreter_python=auto_silent
+log_path = /home/sshuser/ansible.log
+```
+Проверяем работоспособность:
+```
+ansible all -m ping
+```
+
+ </details>
+
+## Разверните веб приложение в docker на сервере BR-SRV
+
+ <details>
+    <summary>ЗАДАНИЕ</summary>
+ 
+Средствами docker должен создаваться стек контейнеров с веб приложением и базой данных 
+
+• Используйте образы site_latestи mariadb_latestрасполагающиеся в директории docker в образе Additional.iso 
+
+• Основной контейнер testapp должен называться tespapp 
+
+• Контейнер с базой данных должен называться db 
+
+• Импортируйте образы в docker, укажите в yaml файле параметры подключения к СУБД, имя БД - testdb, пользователь testс паролем P@ssw0rd, порт приложения 8080, при необходимости другие параметры 
+
+• Приложение должно быть доступно для внешних подключений через порт 8080
+
+ </details>
+
+ <details>
+    <summary>НАЖМИ</summary>
+ 
+Устанавливаем Docker:
+```
+apt-get install docker-ce docker-compose -y
+```
+Запускаем Docker:
+```
+systemctl enable --now docker
+```
+Прооверяем работоспособность:
+```
+docker run hello-world
+```
+Создаем директорию для монтирования образа:
+```
+mkdir -p /mnt/iso
+```
+Создаем site_latest:
+```
+mkdir -p ~/docker-site
+cd ~/docker-site
+```
+Создаем файл index.php и прописываем в нем:
+```
+<?php
+echo "<h1>Test Application</h1>";
+echo "<h2>Connection to Database:</h2>";
+
+$host = getenv('DB_HOST') ?: 'db';
+$dbname = getenv('DB_NAME') ?: 'testdb';
+$user = getenv('DB_USER') ?: 'test';
+$pass = getenv('DB_PASSWORD') ?: 'P@ssw0rd';
+
+try {
+    $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $user, $pass);
+    echo "<p style='color: green;'>Connected to MariaDB successfully!</p>";
+    
+    // Create test table
+    $pdo->exec("CREATE TABLE IF NOT EXISTS test (id INT AUTO_INCREMENT PRIMARY KEY, message VARCHAR(255))");
+    echo "<p>Test table created/checked</p>";
+    
+    // Insert test data
+    $stmt = $pdo->prepare("INSERT INTO test (message) VALUES (?)");
+    $stmt->execute(['Hello from Docker!']);
+    echo "<p>Test data inserted</p>";
+    
+    // Read test data
+    $result = $pdo->query("SELECT * FROM test");
+    echo "<h3>Database entries:</h3><ul>";
+    while ($row = $result->fetch()) {
+        echo "<li>" . htmlspecialchars($row['message']) . "</li>";
+    }
+    echo "</ul>";
+    
+} catch (PDOException $e) {
+    echo "<p style='color: red;'>Connection failed: " . $e->getMessage() . "</p>";
+}
+echo "<p>App port: " . (getenv('APP_PORT') ?: '8080') . "</p>";
+phpinfo();
+?>
+```
+Создаем Dockerfile и прописываем в нем:
+```
+FROM php:7.4-apache
+
+# Install PHP extensions for MariaDB/MySQL
+RUN docker-php-ext-install pdo_mysql mysqli
+
+# Copy application files
+COPY index.php /var/www/html/
+COPY info.php /var/www/html/
+
+# Set working directory
+WORKDIR /var/www/html
+
+# Configure Apache
+RUN a2enmod rewrite
+
+# Expose port
+EXPOSE 8080
+
+# Modify apache to use port 8080
+RUN sed -i 's/80/8080/g' /etc/apache2/sites-available/000-default.conf
+RUN sed -i 's/80/8080/g' /etc/apache2/ports.conf
+
+# Start Apache
+CMD ["apache2-foreground"]
+```
+Создаем info.php и прописываем в нем:
+```
+<?php
+phpinfo();
+?>
+```
+Собираем образ веб-приложения:
+```
+docker build -t site_latest .
+```
+Скачиваем MariaDB:
+```
+docker pull mariadb:10.5
+```
+Создаем образ:
+```
+docker tag mariadb:10.5 mariadb_latest
+```
+Создаем docker-compose.yml командой:
+```
+cat > docker-compose.yml << 'EOF'
+version: '3.8'
+
+services:
+  db:
+    image: mariadb_latest
+    container_name: db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: testdb
+      MYSQL_USER: test
+      MYSQL_PASSWORD: P@ssw0rd
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - app_network
+    ports:
+      - "3306:3306"
+
+  testapp:
+    image: site_latest
+    container_name: tespapp
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: testdb
+      DB_USER: test
+      DB_PASSWORD: P@ssw0rd
+      APP_PORT: 8080
+    ports:
+      - "8080:8080"
+    networks:
+      - app_network
+
+networks:
+  app_network:
+    driver: bridge
+
+volumes:
+  db_data:
+EOF
+```
+Проверяем что образы созданы:
+```
+docker images | grep -E "site_latest|mariadb_latest"
+```
+Проверяем конфиг (должен вывестись сам конфиг):
+```
+docker compose config
+```
+Запускаем контейнеры:
+```
+docker compose up -d
+docker compose up -d testapp
+```
+Если ловим такую ошибку, то делаем следующее:
+
+<img width="1704" height="133" alt="image" src="https://github.com/user-attachments/assets/c45fcc5d-cebd-44d7-8827-871d57d0e686" />
+
+Смотрим чем занят порт и убиваем процесс:
+```
+ss -tulpn | grep 8080
+kill -9 2847
+```
+
+<img width="826" height="52" alt="image" src="https://github.com/user-attachments/assets/366965e8-5d81-459f-a2db-b8ba92552d27" />
+
+Удаляем контейнер:
+```
+docker rm -f tespapp
+```
+Останавливаем контейнеры:
+```
+docker compose down
+```
+Проверяем порт еще раз:
+```
+ss -tulpn | grep 8080
+```
+Запускаем заново и смотрим:
+```
+docker compose up -d
+docker compose ps
+```
+
+<img width="1236" height="200" alt="image" src="https://github.com/user-attachments/assets/49ab6451-9061-4f77-bcfc-7786362be832" />
+
+Проверяем работоспособность:
+
+<img width="1716" height="917" alt="image" src="https://github.com/user-attachments/assets/daf0a120-40ed-4aa6-b350-4f375d9f621c" />
+
+Для того чтобы другие хосты увидели данное творение необходимо настроить iptables на BR-SRV:
+```
+iptables -F
+iptables -X
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+iptables -A INPUT -p tcp --dport 2026 -j ACCEPT
+iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
+iptables -A INPUT -p tcp --dport 8081 -j ACCEPT
+iptables -A INPUT -p tcp --dport 3306 -j ACCEPT
+mkdir /etc/iptables
+iptables-save > /etc/iptables/rules.v4
+```
+Перезапускаем Docker и проверяем правила:
+```
+systemctl restart docker
+iptables -L DOCKER -n -v
+iptables -t nat -L DOCKER -n -v
+iptables -L INPUT -n -v | grep -E "8080|8081"
+```
+
+<img width="1081" height="249" alt="image" src="https://github.com/user-attachments/assets/204b1b80-3a80-42c7-ab2f-993374c0d54b" />
+
+### Для теста я поднимал еще один контейнер на 8081 порту, у вас его быть не должно и можно даже правило для него не создавать и не проверять ничего для этого порта
+
+<img width="861" height="71" alt="image" src="https://github.com/user-attachments/assets/f97bdfb7-a4bd-4ae7-8292-765a7263d787" />
+
+Перезапускаем контейнер:
+```
+docker compose down
+docker compose up -d
+```
+Проверяем на других хостах (либо через браузер http://192.168.2.14:8080):
+```
+curl -v http://192.168.2.14:8080
+```
+
+ </details> 
