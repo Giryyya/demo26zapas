@@ -37,7 +37,9 @@
 ## Произведите базовую настройку устройств
  <details>
     <summary>НАЖМИ</summary>
-   
+
+ ## ПОД РУТА ПРОВАЛИВАЕМСЯ ТОЛЬКО КОМАНДОЙ sudo -i ИЛИ sudo su - (это аналог команды, только в виде связки команд), ЕСЛИ ОНА НЕ РАБОТАЕТ, ТО ЗАХОДИМ ПОД НЕГО ЧЕРЕЗ tty2 (ctrl+alt+f2)
+ 
 • Настройте имена устройств согласно топологии. Используйте полное 
 доменное имя
 ```
@@ -1455,9 +1457,11 @@ docker compose up -d testapp
 
 <img width="1704" height="133" alt="image" src="https://github.com/user-attachments/assets/c45fcc5d-cebd-44d7-8827-871d57d0e686" />
 
-Смотрим чем занят порт и убиваем процесс:
+Смотрим чем занят порт и убиваем процесс (и желательно выключить службу которая занимает порт, иначе при перезагрузке ничего не заработает):
 ```
+netstat -tulpn | grep 8080
 ss -tulpn | grep 8080
+lsof -i :8080
 kill -9 2847
 ```
 
@@ -1491,18 +1495,25 @@ docker compose ps
 ```
 iptables -F
 iptables -X
-iptables -P INPUT DROP
-iptables -P FORWARD DROP
+iptables -t nat -F
+iptables -t nat -X
+iptables -t mangle -F
+iptables -t mangle -X
+iptables -P INPUT ACCEPT
+iptables -P FORWARD ACCEPT
 iptables -P OUTPUT ACCEPT
 iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -p icmp -j ACCEPT
 iptables -A INPUT -i lo -j ACCEPT
-iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-iptables -A INPUT -p tcp --dport 2026 -j ACCEPT
-iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
-iptables -A INPUT -p tcp --dport 8081 -j ACCEPT
-iptables -A INPUT -p tcp --dport 3306 -j ACCEPT
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT   # SSH
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT   # HTTP
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT  # HTTPS
+iptables -A INPUT -p tcp --dport 8080 -j ACCEPT # Ваше приложение
+iptables -A INPUT -p tcp --dport 3306 -j ACCEPT # MySQL/MariaDB
+iptables-save > /etc/sysconfig/iptables
 mkdir /etc/iptables
 iptables-save > /etc/iptables/rules.v4
+iptables -L -n -v
 ```
 Перезапускаем Docker и проверяем правила:
 ```
@@ -1529,3 +1540,398 @@ curl -v http://192.168.2.14:8080
 ```
 
  </details> 
+
+## Разверните веб приложениена сервере HQ-SRV
+
+ <details>
+    <summary>ЗАДАНИЕ</summary>
+ 
+Используйте веб-сервер apache 
+
+• В качестве системы управления базами данных используйте mariadb 
+
+• Файлы веб приложения и дамп базы данных находятся в директории web образа Additional.iso 
+
+• Выполните импорт схемы и данных из файла dump.sql в базу данных webdb 
+
+• Создайте пользователя webс паролем P@ssw0rd и предоставьте ему права доступа к этой базе данных 
+
+• Файлы index.php и директорию images скопируйте в каталог веб сервера apache 
+
+• В файле index.php укажите правильные учётные данные для подключения к БД 
+
+• Запустите веб сервер и убедитесь в работоспособности приложения 
+
+• Основные параметры отметьте в отчёте
+
+ </details>
+
+ <details>
+    <summary>НАЖМИ</summary>
+
+ ### Если есть ISO файл:
+
+ Создаем директорию для монтирования:
+```
+mkdir -p /mnt/iso
+```
+Монтируем ISO-образ (нужно знать путь к Additional.iso):
+```
+mount -o loop /путь/к/Additional.iso /mnt/iso
+```
+Копируем директорию web:
+```
+cp -r /mnt/iso/web ~/
+```
+Проверяем содержимое:
+```
+ls -la ~/web/
+```
+Размонтируем ISO:
+```
+umount /mnt/iso
+```
+### Если ISO нет:
+Создаем директорию:
+```
+mkdir -p ~/web
+cd ~/web
+```
+Создаем dump.sql (дамп базы данных) командой:
+```
+cat > ~/web/dump.sql << 'EOF'
+CREATE DATABASE IF NOT EXISTS webdb;
+USE webdb;
+
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    email VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS products (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    price DECIMAL(10,2),
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS test (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    message VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO users (username, email) VALUES
+    ('admin', 'admin@example.com'),
+    ('user1', 'user1@example.com'),
+    ('user2', 'user2@example.com');
+
+INSERT INTO products (name, price, description) VALUES
+    ('Product 1', 19.99, 'First test product'),
+    ('Product 2', 29.99, 'Second test product'),
+    ('Product 3', 39.99, 'Third test product');
+
+INSERT INTO test (message) VALUES
+    ('Hello from HQ-SRV!'),
+    ('Database connection successful'),
+    ('Test entry 3');
+EOF
+```
+Создание Index.php(главная страница приложения) командой:
+```
+cat > ~/web/index.php << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Web Application on HQ-SRV</title>
+    <style>
+        body { font-family: Arial; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }
+        .success { color: #4CAF50; font-weight: bold; }
+        .error { color: #f44336; font-weight: bold; }
+        table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #4CAF50; color: white; }
+        img { max-width: 200px; margin: 10px; border: 1px solid #ddd; border-radius: 5px; }
+        .info { background: #e3f2fd; padding: 10px; border-radius: 5px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Web Application on HQ-SRV (192.168.1.62)</h1>
+        
+        <div class="info">
+            <h3>Server Information:</h3>
+            <p><strong>Hostname:</strong> <?php echo gethostname(); ?></p>
+            <p><strong>Server IP:</strong> 192.168.1.62</p>
+            <p><strong>Date:</strong> <?php echo date('Y-m-d H:i:s'); ?></p>
+            <p><strong>PHP Version:</strong> <?php echo phpversion(); ?></p>
+        </div>
+        
+        <h2>Database Connection</h2>
+        <?php
+        $host = 'localhost';
+        $dbname = 'webdb';
+        $user = 'web';
+        $pass = 'P@ssw0rd';
+        
+        try {
+            $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $user, $pass);
+            echo "<p class='success'>✓ Connected to MariaDB successfully!</p>";
+            
+            // Show tables
+            $stmt = $pdo->query("SHOW TABLES");
+            $tables = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            
+            if (count($tables) > 0) {
+                echo "<h3>Tables in database:</h3>";
+                echo "<table><tr><th>Table Name</th></tr>";
+                foreach ($tables as $table) {
+                    echo "<tr><td>$table</td></tr>";
+                }
+                echo "</table>";
+                
+                // Show data from test table
+                $stmt = $pdo->query("SELECT * FROM test ORDER BY created_at DESC LIMIT 5");
+                $data = $stmt->fetchAll();
+                
+                if (count($data) > 0) {
+                    echo "<h3>Recent test entries:</h3>";
+                    echo "<table><tr><th>ID</th><th>Message</th><th>Created</th></tr>";
+                    foreach ($data as $row) {
+                        echo "<tr><td>{$row['id']}</td><td>{$row['message']}</td><td>{$row['created_at']}</td></tr>";
+                    }
+                    echo "</table>";
+                }
+            }
+        } catch (PDOException $e) {
+            echo "<p class='error'>✗ Connection failed: " . $e->getMessage() . "</p>";
+        }
+        ?>
+        
+        <h2>Images Gallery</h2>
+        <div>
+            <?php
+            $image_dir = 'images';
+            if (is_dir($image_dir)) {
+                $images = glob($image_dir . "/*.{jpg,jpeg,png,gif}", GLOB_BRACE);
+                if (count($images) > 0) {
+                    foreach ($images as $image) {
+                        echo "<img src='$image' alt='Gallery image'>";
+                    }
+                } else {
+                    echo "<p>No images found. Creating sample images...</p>";
+                    mkdir($image_dir, 0755, true);
+                }
+            } else {
+                echo "<p>Creating images directory...</p>";
+                mkdir($image_dir, 0755, true);
+            }
+            ?>
+        </div>
+    </div>
+</body>
+</html>
+EOF
+```
+Создаем директорию Image и файлы в ней:
+```
+mkdir -p ~/web/images
+echo "Sample image 1" > ~/web/images/image1.txt
+echo "Sample image 2" > ~/web/images/image2.txt
+```
+Устанавливаем необходимое ПО:
+```
+apt-get update
+apt-get install apache2 -y
+apt-get install mariadb-server mariadb-client -y
+apt-get install php8.2 php8.2-mysqli php8.2-mysqlnd apache2-mod_php8.2 -y
+apt-get install php8.2-pdo php8.2-pdo_mysql -y
+```
+Запускаем MariaDB:
+```
+systemctl enable --now mariadb
+```
+Настраиваем безопасность:
+```
+mysql_secure_installation
+```
+Ответы:
+```
+Enter current password for root: [Enter] (просто нажать Enter)
+Switch to unix_socket authentication: n
+Change the root password? n (или y если хотите установить пароль)
+Remove anonymous users? y
+Disallow root login remotely? y
+Remove test database and access to it? y
+Reload privilege tables now? y
+```
+Заходим в MySql:
+```
+mysql -u root -p
+```
+Настраиваем БД:
+```
+CREATE DATABASE IF NOT EXISTS webdb;
+USE webdb;
+SOURCE /root/web/dump.sql;
+CREATE USER 'web'@'localhost' IDENTIFIED BY 'P@ssw0rd';
+GRANT ALL PRIVILEGES ON webdb.* TO 'web'@'localhost';
+FLUSH PRIVILEGES;
+SHOW DATABASES;
+SELECT User, Host FROM mysql.user WHERE User='web';
+SHOW TABLES;
+SELECT * FROM test;
+EXIT;
+```
+Вывод:
+
+<img width="570" height="662" alt="image" src="https://github.com/user-attachments/assets/0484765a-03b8-400b-8bb9-cb5a5a29ade6" />
+
+Проверяем, что пользователь web может подключиться:
+```
+mysql -u web -p'P@ssw0rd' -e "SHOW DATABASES;"
+mysql -u web -p'P@ssw0rd' -D webdb -e "SHOW TABLES;"
+```
+
+<img width="612" height="262" alt="image" src="https://github.com/user-attachments/assets/a40681bd-88e6-4f84-9571-c1d49af64204" />
+
+Настраиваем апач, Проверяем текущий DocumentRoot:
+```
+httpd2 -S | grep -i "documentroot"
+```
+
+<img width="1034" height="54" alt="image" src="https://github.com/user-attachments/assets/751ecc0f-6ac9-408c-8729-84c217476130" />
+
+Создаем директорию htdocs (если её нет) и копируем туда файлы для приложения:
+```
+mkdir -p /etc/httpd2/htdocs
+cp /root/web/index.php /etc/httpd2/htdocs/
+cp -r /root/web/images /etc/httpd2/htdocs/
+echo "<?php phpinfo(); ?>" > /etc/httpd2/htdocs/info.php
+echo "<?php echo 'OK'; ?>" > /etc/httpd2/htdocs/simple.php
+```
+Устанавливаем владельца и права:
+```
+chown -R apache:apache /etc/httpd2/htdocs/
+find /etc/httpd2/htdocs/ -type d -exec chmod 755 {} \;
+find /etc/httpd2/htdocs/ -type f -exec chmod 644 {} \;
+```
+Проверяем наличие модуля PHP в Apache:
+```
+ls -la /etc/httpd2/conf/mods-available/ | grep php
+```
+
+<img width="682" height="67" alt="image" src="https://github.com/user-attachments/assets/d48694e1-01e6-4fed-971d-61571d91e86f" />
+
+Включаем модуль (создаем симлинки):
+```
+ln -sf /etc/httpd2/conf/mods-available/mod_php8.2.load /etc/httpd2/conf/mods-enabled/
+ln -sf /etc/httpd2/conf/mods-available/mod_php8.2.conf /etc/httpd2/conf/mods-enabled/
+```
+Проверяем активные конфиги:
+```
+ls -la /etc/httpd2/conf/sites-enabled/
+```
+
+<img width="910" height="127" alt="image" src="https://github.com/user-attachments/assets/c2d4c6b8-5453-48cb-a4ed-10e4d514a8a9" />
+
+Редактируем основной конфиг:
+```
+vim /etc/httpd2/conf/sites-available/default.conf
+```
+```
+DocumentRoot /etc/httpd2/htdocs
+<Directory /etc/httpd2/htdocs>
+    Options Indexes FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>
+```
+
+<img width="907" height="578" alt="image" src="https://github.com/user-attachments/assets/8dfbd5b4-c3a4-4467-bf47-87fb37eb9ff3" />
+
+Проверяем конфигурацию:
+```
+httpd2 -t
+```
+Если Syntax OK, перезапускаем:
+```
+systemctl restart httpd2
+```
+Проверяем статус:
+```
+systemctl status httpd2 --no-pager | head -10
+```
+### Все дальнейшие проверки можно через браузер делать
+Проверяем простой PHP файл (Должны увидеть: OK):
+```
+curl http://localhost/simple.php
+```
+Проверяем информацию о PHP:
+```
+curl http://localhost/info.php | head -20
+```
+Создадим тестовый файл для проверки БД:
+```
+cat > /etc/httpd2/htdocs/db-test.php << 'EOF'
+<?php
+$host = 'localhost';
+$dbname = 'webdb';
+$user = 'web';
+$pass = 'P@ssw0rd';
+
+echo "<h1>Database Connection Test</h1>";
+
+try {
+    $pdo = new PDO("mysql:host=$host;dbname=$dbname", $user, $pass);
+    echo "<p style='color:green'>✓ Connected to database successfully!</p>";
+    
+    $stmt = $pdo->query("SELECT VERSION()");
+    $version = $stmt->fetch();
+    echo "<p>MySQL Version: " . $version[0] . "</p>";
+    
+    $stmt = $pdo->query("SHOW TABLES");
+    echo "<h3>Tables:</h3><ul>";
+    while ($row = $stmt->fetch()) {
+        echo "<li>" . $row[0] . "</li>";
+    }
+    echo "</ul>";
+    
+} catch (PDOException $e) {
+    echo "<p style='color:red'>✗ Connection failed: " . $e->getMessage() . "</p>";
+}
+?>
+EOF
+
+chown apache:apache /etc/httpd2/htdocs/db-test.php
+```
+Проверим его:
+```
+curl http://localhost/db-test.php
+```
+Настраиваем Iptables (под вопросом насколько нужно):
+```
+iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+mkdir /etc/iptables
+iptables-save > /etc/iptables/rules.v4
+```
+
+### По итогу должно получиться следующее (на других узлах тоже должно работать):
+
+<img width="1716" height="920" alt="image" src="https://github.com/user-attachments/assets/421813e1-f0a5-48cb-af14-ac494d56d56b" />
+
+<img width="1718" height="916" alt="image" src="https://github.com/user-attachments/assets/6be2eb0b-f86e-4b69-98ea-c04f2885035f" />
+
+<img width="1716" height="914" alt="image" src="https://github.com/user-attachments/assets/b3d37a35-86f7-4527-aca4-33c7a8b7feea" />
+
+<img width="1718" height="915" alt="image" src="https://github.com/user-attachments/assets/53d0f0dd-c17f-46b0-a9cc-4db720fe7384" />
+
+<img width="1718" height="960" alt="image" src="https://github.com/user-attachments/assets/f60a68a0-f17d-4dec-bc94-1797fd39652a" />
+
+</details>
+ 
