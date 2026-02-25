@@ -1505,11 +1505,11 @@ iptables -P OUTPUT ACCEPT
 iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A INPUT -p icmp -j ACCEPT
 iptables -A INPUT -i lo -j ACCEPT
-iptables -A INPUT -p tcp --dport 22 -j ACCEPT   # SSH
-iptables -A INPUT -p tcp --dport 80 -j ACCEPT   # HTTP
-iptables -A INPUT -p tcp --dport 443 -j ACCEPT  # HTTPS
-iptables -A INPUT -p tcp --dport 8080 -j ACCEPT # Ваше приложение
-iptables -A INPUT -p tcp --dport 3306 -j ACCEPT # MySQL/MariaDB
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
+iptables -A INPUT -p tcp --dport 3306 -j ACCEPT
 iptables-save > /etc/sysconfig/iptables
 mkdir /etc/iptables
 iptables-save > /etc/iptables/rules.v4
@@ -1935,3 +1935,100 @@ iptables-save > /etc/iptables/rules.v4
 
 </details>
  
+##  На маршрутизаторах сконфигурируйте статическую трансляцию портов
+
+<details>
+    <summary>ЗАДАНИЕ</summary>
+ 
+• Пробросьте порт 8080в порт приложения testapp BR-SRV на маршрутизаторе BR-RTR, для обеспечения работы приложения testapp извне
+
+• Пробросьте порт 8080в порт веб приложения на HQ-SRV на маршрутизаторе HQ-RTR, для обеспечения работы веб приложения извне 
+
+• Пробросьте порт 2026на маршрутизаторе HQ-RTR в порт 2026сервера HQ-SRV, для подключения к серверу по протоколу ssh из внешних сетей 
+
+• Пробросьте порт 2026на маршрутизаторе BR-RTR в порт 2026сервера BR-SRV, для подключения к серверу по протоколу ssh из внешних сетей.
+
+ </details>
+
+<details>
+    <summary>НАЖМИ</summary>
+
+На BR-RTR:
+```
+iptables -t nat -A PREROUTING -i ens33-p tcp --dport 8080 -j DNAT --to-destination 192.168.2.14:8080
+iptables -t nat -A PREROUTING -i ens33 -p tcp --dport 2026 -j DNAT --to-destination 192.168.2.14:2026
+sysctl -p iptables-save > /etc/iptables/rules.v4
+```
+На HQ-RTR:
+```
+iptables -t nat -A PREROUTING -i ens33-p tcp --dport 8080 -j DNAT --to-destination 192.168.2.62:8080
+iptables -t nat -A PREROUTING -i ens33 -p tcp --dport 2026 -j DNAT --to-destination 192.168.1.62:2026
+sysctl -p
+ iptables-save > /etc/iptables/rules.v4
+```
+Проверяем ssh на HQ-CLI (должны подключиться к BR-SRV):
+```
+ssh -p 2026 sshuser@172.16.2.2
+```
+
+
+ </details>
+
+ ## Настройте веб-сервер nginx как обратный прокси-сервер на ISP
+ 
+<details>
+    <summary>ЗАДАНИЕ</summary>
+
+
+При обращении по доменному имени web.au-team.irpo у клиента должно открываться веб приложение на HQ-SRV
+
+• При обращении по доменному имени docker.au-team.irpo клиента должно открываться веб приложение testapp
+
+ </details>
+
+<details>
+    <summary>НАЖМИ</summary>
+
+### Чтобы ISP видел HQ-SRV нужно прокинуть на него frr, а если прокинуть на него маршрутизацию, то вся сеть начинает невероятно плохо работать, так что на свой страх и риск
+
+Устанавливаем nginx:
+```
+apt-get install nginx -y
+```
+Запускаем:
+```
+systemctl enable --now nginx
+```
+Редачим /etc/nginx/nginx.conf (Вставляем перед последней скобкой, иначе nginx будет жаловаться на синтаксис):
+```
+server
+{
+listen 80;
+server_name web.au.team;
+location / {
+proxy_pass http://192.168.1.62:80;
+}
+}
+server {
+listen 80;
+server_name docker;
+location / {
+proxy_pass http://192.168.2.14:8080;
+}
+}
+```
+
+<img width="991" height="701" alt="image" src="https://github.com/user-attachments/assets/e6e43ee4-1744-4e2a-851b-0df2811207bb" />
+
+Проверяем конфиг и перезапускаем:
+```
+nginx -t
+systemctl restart nginx
+```
+### Должно получиться так (Может долго очень грузится и не на всех хостах и причина этому скорее всего - ISP, маршрутизация начинает очень плохо работать с 3 включенным роутером):
+
+<img width="1721" height="949" alt="image" src="https://github.com/user-attachments/assets/8eb0e1c3-0b27-4ad5-8247-2e5bd164175b" />
+
+<img width="1718" height="951" alt="image" src="https://github.com/user-attachments/assets/3e9ae7fd-29c0-43d5-9350-53b20178918a" />
+
+ </details>
