@@ -2032,3 +2032,94 @@ systemctl restart nginx
 <img width="1718" height="951" alt="image" src="https://github.com/user-attachments/assets/3e9ae7fd-29c0-43d5-9350-53b20178918a" />
 
  </details>
+
+## На маршрутизаторе ISP настройте web-based аутентификацию
+
+<details>
+    <summary>ЗАДАНИЕ</summary>
+
+При обращении к сайту web.au-team.irpo клиенту должно быть предложено ввести аутентификационные данные 
+
+• В качестве логина для аутентификации выберите WEBс паролем P@ssw0rd 
+
+• Выберите файл /etc/nginx/.htpasswd в качестве хранилища учётных записей 
+
+• При успешной аутентификации клиент должен перейти на веб сайт.
+
+ </details>
+
+<details>
+    <summary>НАЖМИ</summary>
+
+Создаем файл .htpasswd с пользователем WEB:
+```
+htpasswd -bc /etc/nginx/.htpasswd WEB P@ssw0rd
+```
+Проверяем содержимое файла:
+```
+cat /etc/nginx/.htpasswd
+```
+Устанавливаем владельца и права:
+```
+chown root:root /etc/nginx/.htpasswd
+chmod 644 /etc/nginx/.htpasswd
+```
+
+Редактируем конфигурацию /etc/nginx/sites-available.d/web.au.team:
+```
+server {
+    listen 80;
+    server_name web.au.team;
+    access_log /var/log/nginx/web.au.team.access.log;
+    error_log /var/log/nginx/web.au.team.error.log;
+    location / {
+        auth_basic "Restricted Access - Please Login";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        proxy_pass http://192.168.1.62;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+        proxy_pass_header Authorization;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
+```
+Создаем симлинк в sites-enabled.d:
+```
+ln -s /etc/nginx/sites-available.d/web.au.team /etc/nginx/sites-enabled.d/
+```
+Проверяем синтаксис и перезапускаем nginx:
+```
+nginx -t
+systemctl restart nginx
+```
+На клиентской машине, с которой будете тестировать, добавьте:
+```
+echo "192.168.131.189 web.au.team" >> /etc/hosts
+```
+На DNS-сервере добавьте A-запись:
+```
+web.au.team. IN A 192.168.131.189
+```
+Включаем форвардинг пакетов:
+```
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+sysctl -p
+```
+Настраиваем iptables:
+```
+iptables -t nat -A PREROUTING -p tcp --dport 80 -d 192.168.131.189 -j DNAT --to-destination 192.168.1.62:80
+iptables -t nat -A PREROUTING -p tcp --dport 80 -d 172.16.1.1 -j DNAT --to-destination 192.168.1.62:80
+iptables -t nat -A PREROUTING -p tcp --dport 80 -d 172.16.2.1 -j DNAT --to-destination 192.168.1.62:80
+iptables -A FORWARD -p tcp -d 192.168.1.62 --dport 80 -j ACCEPT
+iptables -A FORWARD -p tcp -s 192.168.1.62 --sport 80 -j ACCEPT
+iptables -t nat -A POSTROUTING -o ens33 -j MASQUERADE
+iptables-save > /etc/iptables/rules.v4
+```
+
+</details>
