@@ -523,7 +523,7 @@ no ip ospf network broadcast
 no ip ospf passive
 ip ospf authentication
 ip ospf authentication-key password
-exi:
+exit
 ```
 Не забываем сохранить изменения (как в циске):
 ```
@@ -2123,3 +2123,507 @@ iptables-save > /etc/iptables/rules.v4
 ```
 
 </details>
+
+# Модуль 3
+##  Выполните импорт пользователей в домен au-team.irpo
+<details>
+    <summary>ЗАДАНИЕ</summary>
+
+В качестве файла источника выберите файл users.csv располагающийся в образе Additional.iso 
+
+• Пользователи должны быть импортированы со своими паролями и другими атрибутами 
+
+• Убедитесь, что импортированные пользователи могут войти на машину HQ-CLI
+
+ </details>
+ <details>
+     <summary>НАЖМИ</summary>
+
+Проверяем что домен работает и получаем билет если не получали:
+```
+systemctl status samba
+samba-tool domain level show
+kinit administrator@AU.TEAM
+klist
+```
+Создаем users.csv (если нет)(ПРОБЕЛОВ БЫТЬ НЕ ДОЛЖНО):
+```
+cat > /tmp/users.csv << 'EOF'
+login,password,givenname,surname,department,mail
+ivanov,P@ssw0rd,Ivan,Ivanov,IT,ivan.ivanov@au.team
+petrov,P@ssw0rd,Petr,Petrov,Sales,petr.petrov@au.team
+sidorov,P@ssw0rd,Sidor,Sidorov,HR,sidor.sidorov@au.team
+smirnova,P@ssw0rd,Anna,Smirnova,Finance,anna.smirnova@au.team
+kuznetsov,P@ssw0rd,Nikolai,Kuznetsov,IT,nikolai.kuznetsov@au.team
+popova,P@ssw0rd,Elena,Popova,Marketing,elena.popova@au.team
+volkov,P@ssw0rd,Alexey,Volkov,Sales,alexey.volkov@au.team
+sokolov,P@ssw0rd,Dmitry,Sokolov,IT,dmitry.sokolov@au.team
+morozova,P@ssw0rd,Olga,Morozova,HR,olga.morozova@au.team
+novikov,P@ssw0rd,Michael,Novikov,Finance,michael.novikov@au.team
+EOF
+```
+Создаем скрипт для импорта юзеров /root/import_users.sh:
+```
+#!/bin/bash
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Configuration
+INPUT_FILE="/tmp/users.csv"
+DOMAIN="au.team"
+SEPARATOR=","
+LOG_FILE="/var/log/import_users_$(date +%Y%m%d_%H%M%S).log"
+PASSWORD="P@ssw0rd"
+
+log() {
+    echo -e "$1" | tee -a "$LOG_FILE"
+}
+
+clear
+
+log "${BLUE}========================================${NC}"
+log "${BLUE}    IMPORT USERS TO DOMAIN au.team     ${NC}"
+log "${BLUE}========================================${NC}"
+log "${GREEN}Password for all users: ${YELLOW}${PASSWORD}${NC}"
+log "${GREEN}Mode: ${YELLOW}NO password change required${NC}"
+log "${BLUE}----------------------------------------${NC}"
+
+if [ "$EUID" -ne 0 ]; then
+    log "${RED}Error: Run as root${NC}"
+    exit 1
+fi
+
+if ! command -v samba-tool &> /dev/null; then
+    log "${RED}Error: samba-tool not found${NC}"
+    exit 1
+fi
+
+if [ ! -f "$INPUT_FILE" ]; then
+    log "${RED}Error: File $INPUT_FILE not found${NC}"
+    exit 1
+fi
+
+HEADER=$(head -1 "$INPUT_FILE")
+if [[ "$HEADER" != *"login"* ]]; then
+    log "${YELLOW}Warning: Invalid file structure${NC}"
+    log "Header: $HEADER"
+    log "Expected: login,givenname,surname,department,mail"
+    read -p "Continue? (y/n): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+log "${GREEN}All checks passed${NC}"
+log "Input file: ${CYAN}$INPUT_FILE${NC}"
+log "Log file: ${CYAN}$LOG_FILE${NC}"
+log "${BLUE}----------------------------------------${NC}"
+
+TOTAL=0
+SUCCESS=0
+FAILED=0
+SKIPPED=0
+START_TIME=$(date +%s)
+
+EXISTING_USERS=$(samba-tool user list)
+
+tail -n +2 "$INPUT_FILE" | while IFS="$SEPARATOR" read -r login givenname surname department mail
+do
+    TOTAL=$((TOTAL + 1))
+    
+    login=$(echo "$login" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    givenname=$(echo "$givenname" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    surname=$(echo "$surname" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    department=$(echo "$department" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    mail=$(echo "$mail" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    
+    if [ -z "$login" ]; then
+        log "${YELLOW}Line $TOTAL: skipped (empty login)${NC}"
+        SKIPPED=$((SKIPPED + 1))
+        continue
+    fi
+    
+    if [ -z "$givenname" ]; then
+        givenname="$login"
+    fi
+    
+    if [ -z "$surname" ]; then
+        surname="-"
+    fi
+    
+    if [ -z "$mail" ]; then
+        mail="${login}@${DOMAIN}"
+    fi
+    
+    if [ -z "$department" ]; then
+        department="Users"
+    fi
+    
+    log "${BLUE}[$TOTAL]${NC} Processing: ${CYAN}$login${NC} ($givenname $surname) [$department]"
+    
+    if echo "$EXISTING_USERS" | grep -q "^$login$"; then
+        log "${YELLOW}  User $login already exists, skipping${NC}"
+        SKIPPED=$((SKIPPED + 1))
+        continue
+    fi
+    
+    samba-tool user create "$login" "$PASSWORD" \
+        --given-name="$givenname" \
+        --surname="$surname" \
+        --mail-address="$mail" \
+        --department="$department" \
+        --login-shell="/bin/bash" \
+        --home-drive="H:" \
+        --home-directory="\\\\${DOMAIN}\\users\\$login" >> "$LOG_FILE" 2>&1
+    
+    if [ $? -eq 0 ]; then
+        log "${GREEN}  Created: $login (password: $PASSWORD)${NC}"
+        SUCCESS=$((SUCCESS + 1))
+        
+        samba-tool group addmembers "Domain Users" "$login" &>/dev/null
+        samba-tool user setpassword "$login" --newpassword="$PASSWORD" >> "$LOG_FILE" 2>&1
+        
+        if [ "$department" != "Users" ] && [ -n "$department" ]; then
+            if samba-tool group list | grep -q "^$department$"; then
+                samba-tool group addmembers "$department" "$login" &>/dev/null
+                log "    Added to group: $department"
+            fi
+        fi
+    else
+        log "${RED}  Failed to create $login${NC}"
+        FAILED=$((FAILED + 1))
+    fi
+    
+    sleep 0.5
+    
+done
+
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+log "${BLUE}========================================${NC}"
+log "${GREEN}IMPORT COMPLETED${NC}"
+log "${BLUE}----------------------------------------${NC}"
+log "Duration: ${CYAN}${DURATION} sec${NC}"
+log "Total processed: ${CYAN}$TOTAL${NC}"
+log "Successfully created: ${GREEN}$SUCCESS${NC}"
+log "Skipped: ${YELLOW}$SKIPPED${NC}"
+log "Failed: ${RED}$FAILED${NC}"
+log "${BLUE}----------------------------------------${NC}"
+log "Log saved: ${CYAN}$LOG_FILE${NC}"
+log "${BLUE}========================================${NC}"
+
+if [ $SUCCESS -gt 0 ]; then
+    echo ""
+    log "${GREEN}Last created users:${NC}"
+    samba-tool user list | tail -$(( SUCCESS > 5 ? 5 : SUCCESS )) | while read user; do
+        echo "   $user"
+    done
+fi
+
+if [ $SUCCESS -gt 0 ]; then
+    echo ""
+    log "${GREEN}Password status:${NC}"
+    samba-tool user list | tail -$(( SUCCESS > 3 ? 3 : SUCCESS )) | while read user; do
+        if samba-tool user show "$user" | grep -q "user must change password: FALSE"; then
+            log "   $user: OK"
+        else
+            log "   $user: WARNING"
+        fi
+    done
+fi
+```
+Выполняем:
+```
+chmod +x /root/import_users.sh
+/root/import_users.sh
+```
+### Если нужно удалить юзеров можем сделать скрипт на удаление /root/delete_users.sh:
+```
+#!/bin/bash
+
+INPUT_FILE="/tmp/users.csv"
+SEPARATOR=","
+LOG_FILE="/var/log/delete_users_$(date +%Y%m%d_%H%M%S).log"
+
+if [ "$EUID" -ne 0 ]; then
+    echo "Run as root"
+    exit 1
+fi
+
+if [ ! -f "$INPUT_FILE" ]; then
+    echo "File $INPUT_FILE not found"
+    exit 1
+fi
+
+echo "WARNING: This will delete users from domain!"
+echo "Press Ctrl+C to cancel or ENTER to continue"
+read
+
+TOTAL=0
+DELETED=0
+FAILED=0
+NOT_FOUND=0
+
+EXISTING_USERS=$(samba-tool user list)
+
+tail -n +2 "$INPUT_FILE" | while IFS="$SEPARATOR" read -r login rest
+do
+    TOTAL=$((TOTAL + 1))
+    login=$(echo "$login" | tr -d '\r' | xargs)
+    
+    if [ -z "$login" ]; then
+        continue
+    fi
+    
+    echo "[$TOTAL] Processing: $login"
+    
+    if echo "$EXISTING_USERS" | grep -q "^$login$"; then
+        samba-tool user delete "$login" >> "$LOG_FILE" 2>&1
+        if [ $? -eq 0 ]; then
+            echo "  -> Deleted: $login"
+            DELETED=$((DELETED + 1))
+        else
+            echo "  -> Error deleting: $login"
+            FAILED=$((FAILED + 1))
+        fi
+    else
+        echo "  -> Not found: $login"
+        NOT_FOUND=$((NOT_FOUND + 1))
+    fi
+    
+    sleep 0.5
+done
+
+echo "==================================="
+echo "DELETE COMPLETED"
+echo "Total processed: $TOTAL"
+echo "Deleted: $DELETED"
+echo "Not found: $NOT_FOUND"
+echo "Failed: $FAILED"
+echo "Log: $LOG_FILE"
+```
+Выполняем:
+```
+chmod +x /root/delete_users.sh
+/root/delete_users.sh
+```
+
+</details>
+
+## Выполните настройку центра сертификации на базе HQ-SRV
+
+<details>
+    <summary>ЗАДАНИЕ</summary>
+
+Необходимо использовать отечественные алгоритмы шифрования 
+
+• Сертификаты выдаются на 30дней 
+
+• Обеспечьте доверие сертификату для HQ-CLI 
+
+• Выдайте сертификаты веб серверам 
+
+• Перенастройте ранее настроенный реверсивный прокси nginx на протокол https 
+
+• При обращении к веб серверам https://web.au-team.irpo и https://docker.au-team.irpo у браузера клиента не должно возникать предупреждений.
+
+ </details>
+
+ <details>
+    <summary>НАЖМИ</summary>
+  
+Создаем структуру CA в домашней директории:
+```
+cd ~
+mkdir -p ~/ca/{certs,crl,newcerts,private}
+chmod 700 ~/ca/private
+touch ~/ca/index.txt
+echo 1000 > ~/ca/serial
+```
+Редачим конфиг /var/lib/ssl/openssl.cnf:
+```
+
+<img width="663" height="892" alt="image" src="https://github.com/user-attachments/assets/1d5eab13-0e47-4855-8481-efd711c2d501" />
+
+<img width="704" height="835" alt="image" src="https://github.com/user-attachments/assets/660ab021-aa65-46e3-b3c7-f3842010b084" />
+```
+Проверяем конфиг:
+```
+openssl version -d
+openssl ciphers -v
+```
+Создаем и проверяем корневой сертификат СА (вводить построчно):
+```
+cd ~/ca
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out private/ca.key.pem
+chmod 400 private/ca.key.pem
+
+openssl req -x509 -new -key private/ca.key.pem \
+  -days 30 -sha256 \
+  -subj "/C=RU/ST=Moscow/L=Moscow/O=MyCompany/CN=HQ-CA/emailAddress=admin@au.team" \
+  -out certs/ca.cert.pem
+  
+openssl x509 -in certs/ca.cert.pem -text -noout | grep -E "Issuer:|Subject:|Not Before|Not After"
+```
+Создаем сертификаты для HQ-SRV и BR-SRV (вводить построчно):
+```
+cd ~/ca
+
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out private/web.au.team.key.pem
+chmod 400 private/web.au.team.key.pem
+
+openssl req -new -key private/web.au.team.key.pem \
+  -subj "/C=RU/ST=Moscow/L=Moscow/O=MyCompany/CN=web.au.team/emailAddress=admin@au.team" \
+  -out web.au.team.csr
+
+openssl x509 -req -in web.au.team.csr \
+  -CA certs/ca.cert.pem -CAkey private/ca.key.pem \
+  -CAcreateserial -out certs/web.au.team.cert.pem \
+  -days 30 -sha256
+
+openssl verify -CAfile certs/ca.cert.pem certs/web.au.team.cert.pem
+
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out private/docker.au.team.key.pem
+chmod 400 private/docker.au.team.key.pem
+
+openssl req -new -key private/docker.au.team.key.pem \
+  -subj "/C=RU/ST=Moscow/L=Moscow/O=MyCompany/CN=docker.au.team/emailAddress=admin@au.team" \
+  -out docker.au.team.csr
+
+openssl x509 -req -in docker.au.team.csr \
+  -CA certs/ca.cert.pem -CAkey private/ca.key.pem \
+  -CAcreateserial -out certs/docker.au.team.cert.pem \
+  -days 30 -sha256
+
+openssl verify -CAfile certs/ca.cert.pem certs/docker.au.team.cert.pem
+```
+Устанавливаем сертификат на HQ-SRV:
+```
+mkdir -p /etc/apache2/ssl
+cp ~/ca/certs/web.au.team.cert.pem /etc/apache2/ssl/
+cp ~/ca/private/web.au.team.key.pem /etc/apache2/ssl/
+cp ~/ca/certs/ca.cert.pem /etc/apache2/ssl/
+a2enmod ssl
+```
+Подгатавливаем и отправляем архивы для BR-SRV и HQ-RTR:
+```
+cd ~/ca
+tar -czf docker_certs.tar.gz certs/docker.au.team.cert.pem private/docker.au.team.key.pem certs/ca.cert.pem
+scp -P 2026 docker_certs.tar.gz sshuser@192.168.2.14:/tmp/
+tar -czf hq-rtr_certs.tar.gz certs/ca.cert.pem
+scp -P 2026 hq-rtr_certs.tar.gz sshuser@192.168.1.1:/tmp/
+cp /root/ca/certs/web.au.team.cert.pem /home/sshuser/
+cp /root/ca/private/web.au.team.key.pem /home/sshuser/
+cp /root/ca/certs/docker.au.team.cert.pem /home/sshuser/
+cp /root/ca/private/docker.au.team.key.pem /home/sshuser/
+chown sshuser:sshuser /home/sshuser/*.pem
+```
+На BR-SRV распаковываем:
+```
+cd /tmp
+tar -xzf docker_certs.tar.gz
+mkdir -p /etc/nginx/ssl
+cp certs/docker.au.team.cert.pem /etc/nginx/ssl/
+cp certs/ca.cert.pem /etc/nginx/ssl/
+cp private/docker.au.team.key.pem /etc/nginx/ssl/
+chmod 644 /etc/nginx/ssl/*.pem
+chmod 600 /etc/nginx/ssl/docker.au.team.key.pem
+ls -la /etc/nginx/ssl/
+```
+На HQ-RTR распаковываем:
+```
+cd /tmp
+tar -xzf hq-rtr_certs.tar.gz
+mkdir -p /etc/nginx/ssl
+cp certs/ca.cert.pem /etc/nginx/ssl/
+scp -P 2026 sshuser@192.168.1.62:/home/sshuser/web.au.team.cert.pem /tmp/
+scp -P 2026 sshuser@192.168.1.62:/home/sshuser/web.au.team.key.pem /tmp/
+scp -P 2026 sshuser@192.168.1.62:/home/sshuser/docker.au.team.cert.pem /tmp/
+scp -P 2026 sshuser@192.168.1.62:/home/sshuser/docker.au.team.key.pem /tmp/
+cp /tmp/web.au.team.cert.pem /etc/nginx/ssl/
+cp /tmp/web.au.team.key.pem /etc/nginx/ssl/
+cp /tmp/docker.au.team.cert.pem /etc/nginx/ssl/
+cp /tmp/web.docker.team.key.pem /etc/nginx/ssl/
+```
+На HQ-RTR редактируем nginx /etc/nginx/nginx.conf:
+```
+server {
+    listen 80;
+    server_name web.au.team;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name web.au.team;
+    
+    ssl_certificate /etc/nginx/ssl/web.au.team.cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/web.au.team.key.pem;
+    ssl_trusted_certificate /etc/nginx/ssl/ca.cert.pem;
+    
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    
+    location / {
+        proxy_pass http://192.168.1.62:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+server {
+    listen 80;
+    server_name docker.au.team;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name docker.au.team;
+    
+    ssl_certificate /etc/nginx/ssl/docker.au.team.cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/docker.au.team.key.pem;
+    ssl_trusted_certificate /etc/nginx/ssl/ca.cert.pem;
+    
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    
+    location / {
+        proxy_pass http://192.168.2.14:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+Устанавливаем доверие на HQ-CLI:
+```
+cp ~/ca/certs/ca.cert.pem ~/ca/certs/CA-HQ.crt
+scp -P 2026 ~/ca/certs/CA-HQ.crt sshuser@192.168.1.3:/tmp/
+```
+Получаем сертификат на HQ-CLI:
+```
+cp /tmp/CA-HQ.crt /etc/pki/ca-trust/source/anchors/
+update-ca-trust
+```
+Проверяем:
+```
+curl -I https://web.au.team
+curl -I https://docker.au.team
+openssl s_client -connect web.au.team:443 -showcerts < /dev/null 2>/dev/null | openssl x509 -text | grep -E "Issuer:|Subject:|Not Before|Not After"
+```
+
+ </details>
