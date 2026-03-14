@@ -2627,3 +2627,396 @@ openssl s_client -connect web.au.team:443 -showcerts < /dev/null 2>/dev/null | o
 ```
 
  </details>
+
+## Перенастройте ip-туннель с базового до уровня туннеля, обеспечивающего шифрование трафика 
+
+<details>
+    <summary>ЗАДАНИЕ</summary>
+
+Настройте защищенный туннель между HQ-RTR и BR-RTR 
+
+• Внесите необходимые изменения в конфигурацию динамической маршрутизации, протокол динамической маршрутизации должен возобновить работу после перенастройки туннеля 
+
+• Выбранное программное обеспечение, обоснование его выбора и его основные параметры, изменения в конфигурации динамической маршрутизации отметьте в отчёте.
+
+ </details>
+
+ <details>
+    <summary>НАЖМИ</summary>
+
+Устанавливаем Strongswan:
+```
+apt-get install strongswan
+```
+Редачим конфиг /etc/strongswan/ipsec.conf:
+### HQ-RTR
+```
+config setup
+    charondebug="ike 2, knl 2, cfg 2"
+
+conn gre-tunnel
+    left=172.16.1.2
+    leftid=172.16.1.2
+    right=172.16.2.2
+    rightid=172.16.2.2
+    type=transport
+    keyexchange=ikev2
+    authby=secret
+    esp=aes256-sha256-modp2048
+    ikelifetime=24h
+    lifetime=8h
+    dpddelay=10s
+    dpdtimeout=30s
+    dpdaction=restart
+    auto=start
+```
+### BR-RTR:
+```
+config setup
+    charondebug="ike 2, knl 2, cfg 2"
+
+conn gre-tunnel
+    left=172.16.2.2
+    leftid=172.16.2.2
+    right=172.16.1.2
+    rightid=172.16.1.2
+    type=transport
+    keyexchange=ikev2
+    authby=secret
+    esp=aes256-sha256-modp2048
+    ikelifetime=24h
+    lifetime=8h
+    dpddelay=10s
+    dpdtimeout=30s
+    dpdaction=restart
+    auto=start
+```
+Создаем файл с ключом на обоих роутерах:
+```
+: PSK "very_strong_secret_key_change_this_123456"
+```
+Добавляем строчку в файл /etc/strongswan/ipsec.secrets:
+```
+172.16.1.2 172.16.2.2 : PSK "TestPassword123"
+```
+Изменяем права к файлу:
+```
+chmod 600 /etc/strongswan/ipsec.secrets
+chown root:root /etc/strongswan/ipsec.secrets
+```
+Настраиваем Iptables на обоих роутерах:
+```
+iptables -I INPUT -i ens33 -p gre -j ACCEPT
+iptables -I OUTPUT -o ens33 -p gre -j ACCEPT
+iptables -I INPUT -i ens33 -p udp --dport 500 -j ACCEPT
+iptables -I INPUT -i ens33 -p udp --dport 4500 -j ACCEPT
+iptables -I INPUT -i ens33 -p esp -j ACCEPT
+iptables -I INPUT -i ens33 -p ah -j ACCEPT
+iptables-save > /etc/iptables/rules.v4
+```
+Настраиваем OSPF:
+### HQ-RTR:
+```
+vtysh
+configure terminal
+interface tun1
+ ip ospf network point-to-point
+ ip ospf hello-interval 10
+ ip ospf dead-interval 40
+router ospf
+ network 10.10.10.0/30 area 0
+ network 192.168.1.0/26 area 0
+do wr
+```
+### BR-RTR:
+```
+vtysh
+configure terminal
+interface tun1
+ ip ospf network point-to-point
+ ip ospf hello-interval 10
+ ip ospf dead-interval 40
+router ospf
+ network 10.10.10.0/30 area 0
+ network 192.168.2.0/28 area 0
+do wr
+```
+Перезапускаем сервисы и проверяем:
+```
+systemctl restart frr
+systemctl enable strongswan-starter
+systemctl start strongswan-starter
+systemctl status strongswan-starter
+ipsec status
+```
+
+<img width="816" height="88" alt="image" src="https://github.com/user-attachments/assets/6b437d94-946f-444d-92e0-7c7210086f83" />
+
+ </details>
+
+## Настройте межсетевой экран на маршрутизаторах HQ-RTR и BR-RTR на сеть в сторону ISP 
+
+<details>
+    <summary>ЗАДАНИЕ</summary>
+
+Обеспечьте работу протоколов http, https, dns, ntp, icmp или дополнительных нужных протоколов 
+
+• Запретите остальные подключения из сети Интернет во внутреннюю сеть.
+
+ </details>
+
+<details>
+    <summary>НАЖМИ</summary>
+
+Настраиваем Iptables на HQ-RTR:
+```
+iptables -F
+iptables -X
+iptables -t nat -F
+iptables -t mangle -F
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+iptables -I INPUT 1 -m conntrack --ctstate INVALID -j DROP
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -i ens37 -p icmp --icmp-type echo-request -j ACCEPT
+iptables -A INPUT -i ens33 -p icmp --icmp-type echo-request -j ACCEPT
+iptables -A INPUT -i ens37 -p tcp --dport 22 -j ACCEPT
+iptables -A INPUT -i ens37 -p tcp --dport 2026 -j ACCEPT
+iptables -A INPUT -i tun1 -p 89 -j ACCEPT
+iptables -A INPUT -i tun1 -p icmp --icmp-type echo-request -j ACCEPT
+iptables -I FORWARD 1 -m conntrack --ctstate INVALID -j DROP
+iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -i ens37 -o tun1 -j ACCEPT
+iptables -A FORWARD -i tun1 -o ens37 -j ACCEPT
+iptables -A FORWARD -i ens37 -o ens33 -j ACCEPT
+iptables -A FORWARD -i tun1 -o ens37 -p tcp --dport 80 -d 192.168.1.62 -j ACCEPT
+iptables -t nat -A POSTROUTING -o ens33 -j MASQUERADE
+iptables-save > /etc/iptables/rules.v4
+```
+Настраиваем Iptables на BR-RTR:
+```
+iptables -F
+iptables -X
+iptables -t nat -F
+iptables -t mangle -F
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+iptables -I INPUT 1 -m conntrack --ctstate INVALID -j DROP
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -i ens37 -p icmp --icmp-type echo-request -j ACCEPT
+iptables -A INPUT -i ens33 -p icmp --icmp-type echo-request -j ACCEPT
+iptables -A INPUT -i ens37 -p tcp --dport 22 -j ACCEPT
+iptables -A INPUT -i ens37 -p tcp --dport 2026 -j ACCEPT
+iptables -A INPUT -i tun1 -p 89 -j ACCEPT
+iptables -A INPUT -i tun1 -p icmp --icmp-type echo-request -j ACCEPT
+iptables -I FORWARD 1 -m conntrack --ctstate INVALID -j DROP
+iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -i ens37 -o tun1 -j ACCEPT
+iptables -A FORWARD -i tun1 -o ens37 -j ACCEPT
+iptables -A FORWARD -i ens37 -o ens33 -j ACCEPT
+iptables -A FORWARD -i tun1 -o ens37 -p tcp --dport 8080 -d 192.168.2.14 -j ACCEPT
+iptables -t nat -A POSTROUTING -o ens33 -j MASQUERADE
+iptables-save > /etc/iptables/rules.v4
+```
+ </details>
+
+## Настройте принт-сервер cups на сервере HQ-SRV
+
+<details>
+    <summary>ЗАДАНИЕ</summary>
+
+Опубликуйте виртуальный pdf-принтер 
+
+• На клиенте HQ-CLI подключите виртуальный принтер как принтер по умолчанию.
+
+ </details>
+
+<details>
+    <summary>НАЖМИ</summary>
+
+Устанавливаем cups:
+```
+apt-get update
+apt-get install cups cups-pdf
+```
+Создаем группу и добавляем туда юзера (после этого необходимо перелогиниться):
+```
+groupadd -r lpadmin
+usermod -aG lpadmin $USER
+```
+Проверяем что драйвер доступен:
+```
+lpinfo --make-and-model "PDF" -m
+```
+Настраиваем доступ в консоль и запускаем cups:
+```
+cupsctl --remote-admin
+sudo systemctl restart cups
+sudo systemctl enable cups
+sudo systemctl status cups
+```
+Открываем в браузере (login - root, passwd - toor):
+```
+http://localhost:631/admin
+```
+Жмем:
+```
+Добавить принтер
+CUPS-PDF (Virtual PDF Printer)
+Название Virtual_PDF
+Расположение hq-srv
+Разрешить совместный доступ
+Создать: Generic
+Модель: Generic CUPS-PDF Printer (w/ options) (en)
+```
+Назначаем принтер по умолчанию:
+```
+lpadmin -d Virtual_PDF
+lpstat -d
+```
+Редактируем /etc/cups/cups-pdf.conf:
+```
+Меняем Out ${DESKTOP} на:
+Out /root/PDF
+```
+Создаем директорию и перезапускаем cups:
+```
+mkdir -p /root/PDF
+chmod 755 /root/PDF
+systemctl restart cups
+```
+Проводим тестовую печать:
+```
+echo "Test print job" > ~/test.txt
+lp -d Virtual_PDF ~/test.txt
+ls -la root/PDF/
+```
+### Должен появится файл test_job.pdf
+
+На HQ-CLI устанавливаем cups:
+```
+apt-get update
+apt-get install cups cups-filters cups-pk-helper
+```
+Создаем директорию для печати:
+```
+mkdir -p ~/.cups
+chmod 755 ~/.cups
+echo "ServerName 192.168.1.62" > ~/.cups/client.conf
+chmod 644 ~/.cups/client.conf
+ls -la ~/.cups/
+cat ~/.cups/client.conf
+```
+Проверяем доступность:
+```
+curl -I http://192.168.1.100:631
+lpstat -s
+```
+Устанавливаем как принтер по умолчанию:
+```
+lpoptions -d Virtual_PDF
+lpstat -d
+```
+Проводим тестовую печать:
+```
+echo "Remote print test from HQ-CLI" > ~/remote-test.txt
+lp -d Virtual_PDF ~/remote-test.txt
+lpstat -o
+```
+Проверяем что файл появился:
+```
+ls /root/PDF
+```
+### Если не сработало можно попробовать сделать следующее:
+
+HQ-SRV:
+```
+apt-get update
+apt-get install cups cups-pdf
+usermod -aG lpadmin $USER
+sed -i 's|^Out .*|Out /var/spool/cups-pdf/${USER}|' /etc/cups/cups-pdf.conf
+cat > /etc/cups/cupsd.conf << 'EOF'
+Port 631
+Listen 0.0.0.0:631
+<Location />
+  Order allow,deny
+  Allow localhost
+  Allow 192.168.1.0/26
+  AuthType None
+</Location>
+<Location /printers>
+  Order allow,deny
+  Allow localhost
+  Allow 192.168.1.0/26
+  AuthType None
+</Location>
+<Location /printers/Virtual_PDF>
+  Order allow,deny
+  Allow localhost
+  Allow 192.168.1.0/26
+  AuthType None
+</Location>
+EOF
+lpadmin -x Virtual_PDF 2>/dev/null
+lpadmin -p Virtual_PDF -v cups-pdf:/ -E -o printer-is-shared=true
+lpadmin -d Virtual_PDF
+systemctl restart cups
+systemctl enable cups
+systemctl status cups
+lpstat -p Virtual_PDF -d
+```
+На HQ-CLI:
+```
+apt-get update
+apt-get install cups-client
+mkdir -p ~/.cups
+echo "ServerName 192.168.1.62" > ~/.cups/client.conf
+chmod 644 ~/.cups/client.conf
+lpstat -h 192.168.1.62 -s
+lpoptions -h 192.168.1.62 -d Virtual_PDF
+lpstat -d
+echo "test HQ-CLI" > ~/test-print.txt
+lp -h 192.168.1.62 -d Virtual_PDF ~/test-print.txt
+```
+Проверяем на сервере:
+```
+find / -name "*.pdf" -mmin -5 2>/dev/null
+ls -la /var/spool/cups-pdf/ANONYMOUS/
+file /var/spool/cups-pdf/ANONYMOUS/test-print.txt.pdf
+```
+### Возможные ошибки
+Если клиент не видит принтер:
+```
+rm -rf ~/.cups ~/.cache/cups
+mkdir -p ~/.cups
+echo "ServerName 192.168.1.62" > ~/.cups/client.conf
+lpstat -h 192.168.1.62 -s
+```
+Если печать не создает PDF:
+```
+tail -f /var/log/cups/error_log
+ls -la /var/spool/cups-pdf/
+ls -la /root/PDF/
+```
+Если ошибка "Запрещено":
+```
+grep -i "authtype" /etc/cups/cupsd.conf
+iptables -F
+```
+Результаты проверки:
+```
+# На сервере
+lpstat -p Virtual_PDF -d
+
+# На клиенте
+lpstat -h 192.168.1.62 -s
+
+# Созданный PDF-файл
+ls -la /var/spool/cups-pdf/ANONYMOUS/
+```
+
+</details>
