@@ -3020,3 +3020,483 @@ ls -la /var/spool/cups-pdf/ANONYMOUS/
 ```
 
 </details>
+
+## Реализуйте логирование при помощи rsyslog на устройствах HQ-RTR, BR-RTR, BR-SRV
+
+<details>
+    <summary>ЗАДАНИЕ</summary>
+
+ Сервер сбора логов расположен на HQ-SRV, убедитесь, что сервер не является клиентом самому себе 
+ 
+• Приоритет сообщений должен быть не ниже warning 
+
+• Все журналы должны находиться в директории /opt. Для каждого устройства должна выделяться своя поддиректория, которая совпадает с именем машины 
+
+• Реализуйте ротацию собранных логов на сервере HQ-SRV: 
+
+• Ротируются все логи, находящиеся в директории и поддиректориях /opt 
+
+• Ротация производится один раз в неделю 
+
+• Логи необходимо сжимать 
+
+• Минимальный размер логов для ротации – 10МБ.
+
+ </details>
+
+ <details>
+    <summary>НАЖМИ</summary>
+  
+### Настраиваем HQ-RTR:
+Устанавливаем rsyslog:
+```
+apt-get update && apt-get install rsyslog -y
+```
+Создаем файл для загрузки модулей:
+```
+cat > /etc/rsyslog.d/00-modules.conf << 'EOF'
+module(load="imudp")
+module(load="imtcp")
+EOF
+```
+Настраиваем прием логов:
+```
+cat > /etc/rsyslog.d/01-inputs.conf << 'EOF'
+input(type="imudp" port="514" ruleset="remote")
+input(type="imtcp" port="514" ruleset="remote")
+EOF
+```
+Настраиваем шаблоны и правила:
+```
+cat > /etc/rsyslog.d/10-remote-rules.conf << 'EOF'
+template(name="RemotePerHostLogs" type="string"
+         string="/opt/%HOSTNAME%/%programname%.log")
+
+ruleset(name="remote") {
+    action(type="omfile" dynaFile="RemotePerHostLogs"
+           dirCreateMode="0755" fileCreateMode="0644")
+}
+EOF
+```
+Очищаем старые конфиги:
+```
+rm -f /etc/rsyslog.d/debug*.conf 2>/dev/null
+rm -f /etc/rsyslog.d/backup 2>/dev/null
+rm -f /etc/rsyslog.d/*.bak 2>/dev/null
+rm -f /etc/rsyslog.d/*~ 2>/dev/null
+```
+Создаем директорию для логов:
+```
+mkdir -p /opt
+chmod 755 /opt
+```
+Проверяем и запускаем rsyslog:
+```
+rsyslogd -N1
+systemctl restart rsyslog
+systemctl status rsyslog --no-pager -l
+netstat -tulpn | grep 514
+```
+
+<img width="875" height="69" alt="image" src="https://github.com/user-attachments/assets/9638c587-5455-46e3-90aa-0c927c4c1ff0" />
+
+### Настраиваем BR-RTR, BR-SRV, HQ-RTR:
+### Возможно придется добавить правило в iptables на роутерах:
+```
+iptables -t nat -L PREROUTING -n -v | grep 514
+iptables -I FORWARD -s 192.168.2.14 -d 192.168.1.62 -p upd --dport 514 -j ACCEPT
+iptabes -I FORWARD -s 192.168.1.62 -d 192.168.2.14 -p udp --sport 514 -j ACCEPT
+iptables -I FORWARD -p tcp --dport 514 -j ACCEPT
+iptabes -I FORWARD -p udp --dport 514 -j ACCEPT
+iptables-save > /etc/iptables/rules.v4
+```
+
+Устанавливаем rsyslog:
+```
+apt-get update && apt-get install rsyslog -y
+```
+Редачим конфиг:
+```
+cat > /etc/rsyslog.conf << 'EOF'
+# rsyslog configuration file
+
+#### MODULES ####
+module(load="imuxsock")
+module(load="imklog")
+
+#### GLOBAL DIRECTIVES ####
+global(workDirectory="/var/spool/rsyslog")
+
+#### RULES ####
+# Local logs
+*.info;mail.none;authpriv.none;cron.none   /var/log/messages
+authpriv.*   /var/log/secure
+mail.*       /var/log/maillog
+cron.*       /var/log/cron
+*.emerg      :omusrmsg:*
+
+# Send all logs to central server
+*.* @@192.168.1.62:514
+EOF
+```
+Проверяем и запускаем rsyslog:
+```
+rsyslogd -N1
+systemctl restart rsyslog
+systemctl status rsyslog --no-pager -l
+```
+Проверяем отправку:
+```
+logger -p user.warning "Test WARNING from $(hostname) $(date)"
+logger -p user.crit "Test CRIT from $(hostname) $(date)"
+logger -p user.info "Test INFO (SHOULD NOT ARRIVE) from $(hostname) $(date)"
+```
+### На сервере должна появится директория в /opt и там файлы с логами:
+
+<img width="960" height="251" alt="image" src="https://github.com/user-attachments/assets/b9f5358f-72e5-4c68-81a3-6f1cafe623ef" />
+
+Настраиваем ротацию:
+```
+cat > /etc/logrotate.d/central-logs << 'EOF'
+/opt/*/*.log {
+    weekly
+    rotate 4
+    size 10M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 root root
+    sharedscripts
+    postrotate
+        systemctl kill -s HUP rsyslog > /dev/null 2>&1 || true
+    endscript
+}
+EOF
+```
+Проверяем конфиг:
+```
+logrotate -d /etc/logrotate.d/central-logs
+logrotate -f /etc/logrotate.d/central-logs
+```
+
+<img width="1218" height="789" alt="image" src="https://github.com/user-attachments/assets/b8be42d8-c9ca-4d55-a902-26fff68bc3fc" />
+
+<img width="596" height="838" alt="image" src="https://github.com/user-attachments/assets/73a9de9e-4ad9-46ef-9a3b-15eb100ab76e" />
+
+Проверяем ротацию:
+```
+ls -la /opt/br-srv/
+logrotate -f /etc/logrotate.d/central-logs
+ls -la /opt/br-srv/*.gz 2>/dev/null
+```
+Добавляем в крон:
+```
+ls -la /etc/cron.daily/ | grep logrotate
+echo "0 0 * * 0 /usr/sbin/logrotate /etc/logrotate.conf > /dev/null 2>&1" >> /var/spool/cron/root
+crontab -l
+```
+### Проверяем все:
+```
+ls -la /opt/
+ls -la /opt/br-srv/
+```
+На любом клиенте:
+```
+logger -p user.info "INFO message (SHOULD NOT ARRIVE)"
+logger -p user.warning "WARNING message (SHOULD ARRIVE)"
+logger -p user.err "ERR message (SHOULD ARRIVE)"
+```
+На сервере:
+```
+logrotate -f /etc/logrotate.d/central-logs
+```
+
+<img width="679" height="245" alt="image" src="https://github.com/user-attachments/assets/ca00cb7c-f6be-4298-9177-69cffd27bb89" />
+
+ </details>
+
+## На сервере HQ-SRV реализуйте мониторинг устройств с помощью открытого программного обеспечения
+
+<details>
+    <summary>ЗАДАНИЕ</summary>
+
+Обеспечьте доступность по URL - http://mon.au-team.irpo для сетей офиса HQ, внесите изменения в инфраструктуру разрешения доменных имён 
+
+• Мониторить нужно устройства HQ-SRV и BR-SRV 
+
+• В мониторинге должны визуально отображаться нагрузка на ЦП, объем занятой ОП и основного накопителя 
+
+• Логин и пароль для службы мониторинга admin P@ssw0rd 
+
+• Организуйте доступ к мониторингу для HQ-CLI, без внешнего доступа 
+
+• Выбор программного обеспечения, основание выбора и основные параметры с указанием порта, на котором работает мониторинг, отметьте в отчёте
+
+ </details>
+
+ <details>
+    <summary>НАЖМИ</summary>
+
+ Добавляем DNS записи на HQ-SRV и HQ-CLI:
+HQ-SRV: 
+```
+echo "127.0.0.1 mon.au.team" >> /etc/hosts
+```
+HQ-CLI:
+```
+echo "192.168.1.62 mon.au.team" >> /etc/hosts
+```
+### Будем использовать prometheus с grafana:
+### HQ-SRV:
+Создаем пользователя для сервисов:
+```
+useradd --no-create-home --shell /bin/false prometheus
+useradd --no-create-home --shell /bin/false node_exporter
+```
+Скачиваем Prometheus:
+```
+cd /tmp
+curl -LO https://github.com/prometheus/prometheus/releases/download/v2.55.1/prometheus-2.55.1.linux-amd64.tar.gz
+tar -xvf prometheus-2.55.1.linux-amd64.tar.gz
+mv prometheus-2.55.1.linux-amd64 /opt/prometheus
+```
+Создаем директорию:
+```
+mkdir -p /opt/prometheus/data
+chown -R prometheus:prometheus /opt/prometheus
+```
+Конфигурируем Prometheus:
+```
+cat > /opt/prometheus/prometheus.yml << 'EOF'
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'hq-srv'
+    static_configs:
+      - targets: ['192.168.1.62:9100']
+        labels:
+          instance: 'hq-srv'
+          group: 'servers'
+
+  - job_name: 'br-srv'
+    static_configs:
+      - targets: ['192.168.2.14:9100']
+        labels:
+          instance: 'br-srv'
+          group: 'servers'
+EOF
+
+chown prometheus:prometheus /opt/prometheus/prometheus.yml
+```
+Создаем systemd юнит:
+```
+cat > /etc/systemd/system/prometheus.service << 'EOF'
+[Unit]
+Description=Prometheus
+After=network.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/opt/prometheus/prometheus \
+    --config.file=/opt/prometheus/prometheus.yml \
+    --storage.tsdb.path=/opt/prometheus/data \
+    --web.console.templates=/opt/prometheus/consoles \
+    --web.console.libraries=/opt/prometheus/console_libraries
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+Устанавливаем node_exporter:
+```
+cd /tmp
+curl -LO https://github.com/prometheus/node_exporter/releases/download/v1.8.2/node_exporter-1.8.2.linux-amd64.tar.gz
+tar -xvf node_exporter-1.8.2.linux-amd64.tar.gz
+mv node_exporter-1.8.2.linux-amd64 /opt/node_exporter
+chown -R node_exporter:node_exporter /opt/node_exporter
+```
+Создаем systemd юнит для node_exporter:
+```
+cat > /etc/systemd/system/node_exporter.service << 'EOF'
+[Unit]
+Description=Node Exporter
+After=network.target
+
+[Service]
+User=node_exporter
+Group=node_exporter
+Type=simple
+ExecStart=/opt/node_exporter/node_exporter
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+Запускаем Prometheus и Node_Exporter:
+```
+systemctl daemon-reload
+systemctl enable prometheus node_exporter
+systemctl start prometheus node_exporter
+systemctl status prometheus --no-pager -l
+systemctl status node_exporter --no-pager -l
+netstat -tulpn | grep -E "9090|9100"
+```
+### BR-SRV:
+Создаем пользователя:
+```
+useradd --no-create-home --shell /bin/false node_exporter
+```
+Устанавливаем node_exporter:
+```
+cd /tmp
+curl -LO https://github.com/prometheus/node_exporter/releases/download/v1.8.2/node_exporter-1.8.2.linux-amd64.tar.gz
+tar -xvf node_exporter-1.8.2.linux-amd64.tar.gz
+mv node_exporter-1.8.2.linux-amd64 /opt/node_exporter
+chown -R node_exporter:node_exporter /opt/node_exporter
+```
+Создаем systemd юнит:
+```
+cat > /etc/systemd/system/node_exporter.service << 'EOF'
+[Unit]
+Description=Node Exporter
+After=network.target
+
+[Service]
+User=node_exporter
+Group=node_exporter
+Type=simple
+ExecStart=/opt/node_exporter/node_exporter
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+Запускаем node_exporter:
+```
+systemctl daemon-reload
+systemctl enable node_exporter
+systemctl start node_exporter
+systemctl status node_exporter --no-pager -l
+netstat -tulpn | grep 9100
+```
+### HQ-SRV:
+Устанавливаем Grafana:
+```
+apt-get update && apt-get install shadow-utils fontconfig -y
+wget https://dl.grafana.com/oss/release/grafana-11.2.0.linux-amd64.tar.gz
+tar -zxvf grafana-11.2.0.linux-amd64.tar.gz
+mv grafana-v11.2.0 /opt/grafana
+```
+Создаем пользователя:
+```
+useradd --no-create-home --shell /bin/false grafana
+chown -R grafana:grafana /opt/grafana
+```
+Создаем systemd юнит для grafana:
+```
+cat > /etc/systemd/system/grafana.service << 'EOF'
+[Unit]
+Description=Grafana
+After=network.target
+
+[Service]
+User=grafana
+Group=grafana
+Type=simple
+ExecStart=/opt/grafana/bin/grafana-server -homepath /opt/grafana
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+Конфигурируем grafana:
+```
+cat > /opt/grafana/conf/custom.ini << 'EOF'
+[server]
+http_port = 3000
+domain = mon.au.team
+root_url = http://mon.au.team:3000
+
+[auth]
+disable_login_form = false
+
+[auth.anonymous]
+enabled = false
+
+[security]
+admin_user = admin
+admin_password = P@ssw0rd
+EOF
+
+chown grafana:grafana /opt/grafana/conf/custom.ini
+```
+Запускаем grafana:
+```
+systemctl daemon-reload
+systemctl enable grafana
+systemctl start grafana
+systemctl status grafana --no-pager -l
+netstat -tulpn | grep 3000
+```
+На HQ-CLI добавляем dns запись:
+```
+echo "192.168.1.62 mon.au.team" >> /etc/hosts
+```
+
+Открываем графану по адресу mon.au.team:3000
+```
+login:admin
+password:P@ssw0rd
+```
+Заходим сюда:
+
+<img width="1719" height="885" alt="image" src="https://github.com/user-attachments/assets/43b845cc-e553-4486-a2d9-929c64a529d2" />
+
+Жмем Add data source и выбираем prometheus:
+
+<img width="1716" height="923" alt="image" src="https://github.com/user-attachments/assets/9c8ca5af-de67-4fab-8bbb-3e9ad72b10e8" />
+
+Вбиваем сюда http://localhost:9090
+
+<img width="1710" height="855" alt="image" src="https://github.com/user-attachments/assets/213ed10d-702e-42c0-b7bb-408028809a8c" />
+
+Внизу жмем save & test:
+
+<img width="1078" height="243" alt="image" src="https://github.com/user-attachments/assets/b1d74848-0899-4fed-8193-62052b2d99ea" />
+
+Жмем на + в правом верхнем углу, import dashboard:
+
+<img width="1715" height="876" alt="image" src="https://github.com/user-attachments/assets/1de00880-1e70-4119-84ce-21268e878119" />
+
+Вводим 1860 в поле и нажимаем Load:
+
+<img width="1715" height="873" alt="image" src="https://github.com/user-attachments/assets/52dd0029-63ef-4904-8708-de47f8c535f4" />
+
+Жмем import:
+
+<img width="1716" height="875" alt="image" src="https://github.com/user-attachments/assets/12574dcf-98eb-4015-970c-bec7211e57ff" />
+
+Должно получиться так:
+
+<img width="1718" height="878" alt="image" src="https://github.com/user-attachments/assets/f8b9b3e5-09fa-4277-ae8d-356801821119" />
+
+Настраиваем iptables на hq-rtr:
+```
+iptables -I INPUT -p tcp --dport 9090 -s 192.168.1.0/26 -j ACCEPT
+iptables -I INPUT -p tcp --dport 9090 -j DROP
+iptables -I INPUT -p tcp --dport 3000 -s 192.168.1.0/26 -j ACCEPT
+iptables -I INPUT -p tcp --dport 3000 -j DROP
+iptables -I INPUT -p tcp --dport 9100 -s 192.168.2.14 -j ACCEPT
+iptables-save > /etc/iptables/rules.v4
+```
+
+ </details>
