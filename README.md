@@ -545,6 +545,19 @@ show ip ospf route
 
 <img width="498" height="220" alt="image" src="https://github.com/user-attachments/assets/f7df5030-7a98-4561-a69c-ba35601ba708" />
 
+## Настраиваем доступ к ISP:
+Прописываем маршруты на ISP,:
+```
+echo "192.168.1.0/26 via 172.16.1.2" > /etc/net/ifaces/ens38/ipv4route
+
+```
+Прописываем Iptables на HQ-RTR, BR-RTR:
+```
+iptables -t nat -D POSTROUTING -o ens33 -j MASQUERADE
+iptables -t nat -A POSTROUTING -o ens33 ! -d 172.16.0.0/12 -j MASQUERADE
+iptables-save > /etc/iptables/rules.v4
+```
+
  </details>
 
 ##  Настройка динамической трансляции адресов маршрутизаторах HQ-RTR и BR-RTR
@@ -605,6 +618,7 @@ systemctl restart dhcpd
 
 ![image](https://github.com/user-attachments/assets/e929cbfd-2d7e-49c1-9a27-db636dfb165c)
 
+
  </details>
 
 ## Настройте инфраструктуру разрешения доменных имён для офисов HQ и BR
@@ -629,7 +643,6 @@ DNS сервер(77.88.8.7, 77.88.8.3 или другие)
 ```
 listen-on { any; };
 allow-query { any; };
-allow-transfer { 192.168.33.254; };
 ```
 ```
 systemctl restart network
@@ -640,31 +653,31 @@ systemctl enable --now bind
 ```
 Создаем прямую и обратную зону в /etc/bind/local.conf:
 
-<img width="902" height="683" alt="image" src="https://github.com/user-attachments/assets/ba19e661-36c9-4a0a-aa3e-53a43b503f2a" />
+<img width="419" height="380" alt="image" src="https://github.com/user-attachments/assets/30bc355d-2f79-4716-a1ba-2d9f28f82a3a" />
 
 Копируем дефолты:
 ```
-cp /etc/bind/zone/{localhost,au.db}
+cp /etc/bind/zone/{localhost,au-team.db}
 cp /etc/bind/zone/127.in-addr.arpa /etc/bind/zone/1.168.192.in-addr.arpa.db
 cp /etc/bind/zone/127.in-addr.arpa /etc/bind/zone/2.168.192.in-addr.arpa.db
 ```
 Назначаем права:
 ```
-chown root:named /etc/bind/zone/au.db
+chown root:named /etc/bind/zone/au-team.db
 chown root:named /etc/bind/zone/1.168.192.in-addr.arpa.db
 chown root:named /etc/bind/zone/2.168.192.in-addr.arpa.db
 ```
-Настраиваем зону прямого просмотра /etc/bind/zone/au.db:
+Настраиваем зону прямого просмотра /etc/bind/zone/au-team.db:
 
-<img width="897" height="657" alt="image" src="https://github.com/user-attachments/assets/86b0b940-e5f3-4000-b5e1-cc2e63ac3c3e" />
+<img width="744" height="838" alt="image" src="https://github.com/user-attachments/assets/d6cb5a8a-96eb-4fe2-9559-647291c82d28" />
 
 Настраиваем зону обратного просмотра /etc/bind/zone/1.168.192.in-addr.arpa.db:
 
-<img width="918" height="681" alt="image" src="https://github.com/user-attachments/assets/326fc7d8-10f9-48af-ab0d-0c1f0c8c94a5" />
+<img width="758" height="845" alt="image" src="https://github.com/user-attachments/assets/4de28e52-66cc-4077-9ee8-fdbbd67084aa" />
 
 Настраиваем зону обратного просмотра /etc/bind/zone/2.168.192.in-addr.arpa.db:
 
-<img width="883" height="716" alt="image" src="https://github.com/user-attachments/assets/70c19ee1-57a3-4c7e-9d83-bc942ac153a1" />
+<img width="746" height="841" alt="image" src="https://github.com/user-attachments/assets/af184b7a-0496-4aca-a4e6-112a84e5d511" />
 
 ###  ВАЖНО!!! Я добавил в зону прямого просмотра все устройства кроме ISP и сделал обратные зоны для всех устройств в подсетях 1.0 и 2.0. Смотрите задание, там могут быть другие условия.
 Проверяем зоны:
@@ -672,7 +685,8 @@ chown root:named /etc/bind/zone/2.168.192.in-addr.arpa.db
 named-checkconf -z
 ```
 
-<img width="506" height="189" alt="image" src="https://github.com/user-attachments/assets/fde35c82-e213-4e02-86ed-5d72d87e1ffb" />
+<img width="496" height="159" alt="image" src="https://github.com/user-attachments/assets/0d8a0f2e-da92-4e53-982e-a32460b5a80d" />
+
 
 В файле /etc/hosts прописываем адрес сервера:
 ```
@@ -694,7 +708,7 @@ named-checkconf -z
 search au.team
 nameserver 192.168.1.62
 ```
-И так делаем во всех интерфейсах (и на днс сервере тоже делаем)
+И так делаем во всех интерфейсах (на HQ-SRV добавляем еще 8.8.8.8 или другой резолвер)
 
 Перезагружаем сеть:
 ```
@@ -764,37 +778,37 @@ hquser№ (например hquser1, hquser2 и т.д.)
 
 Устанавливаем необходимые пакеты:
 ```
-apt update
-apt install samba-dc samba-winbind krb5-kdc chrony iptables
+apt-get update && apt-get install task-samba-dc samba-client samba-winbind krb5-kinit -y
 ```
-Редактируем хрони /etc/chrony.conf:
+Переименовываем старый конфиг:
 ```
-server pool.ntp.org iburst
-```
-Перезапускаем хрони:
-```
-systemctl enable --now chronyd
-```
-Останавливаем стандартные службы самбы, если запущены:
-```
-systemctl stop smbd nmbd winbind
-systemctl disable smbd nmbd winbind
+mv /etc/samba/smb.conf /etc/samba/smb.conf.bak
 ```
 Создаем домен:
 ```
-rm /etc/samba/smb.conf
 samba-tool domain provision --use-rfc2307 --interactive
 ```
+| Настройка | Значение|
+|:-|:-|
+|Realm | AU-TEAM.IRPO |
+| Domain | AU-TEAM |
+| Server Role  | dc |
+| DNS backend | EcoRouter/Alt 
+|DNS forwarder | 192.168.1.62  |
+| Administrator password | P@ssw0rd |
+
+Скопируем файл кербероса в системную директорию:
 ```
-Realm: AU.TEAM
-Domain: AU
-Server Role: dc
-DNS backend: SAMBA_INTERNAL 
-DNS forwarder: 192.168.1.62 
-Administrator password: P@ssw0rd 
+cp /var/lib/samba/private/krb5.conf /etc/
+```
+Выключаем bind:
+```
+systemctl stop bind
+systemctl disable bind
 ```
 Запускаем самбу (сначала нужно ребутнуть сервер, иначе будут ошибки):
 ```
+systemctl unmask samba
 systemctl enable --now samba
 ```
 Открываем порты в iptables (на роутерах):
@@ -809,7 +823,7 @@ samba-tool domain level show
 samba-tool user list
 ```
 
-<img width="488" height="280" alt="image" src="https://github.com/user-attachments/assets/5867b327-4629-4271-8289-c4c75df2a0a2" />
+<img width="701" height="268" alt="image" src="https://github.com/user-attachments/assets/c49c16db-22df-416f-92cb-d8f7a5d93565" />
 
 Создаем группу hq:
 ```
@@ -833,14 +847,14 @@ samba-tool group listmembers hq
 
 Проверяем /etc/resolv.conf:
 ```
-search au.team
+search au-team.irpo
 nameserver 192.168.2.14
 nameserver 192.168.1.62
 ```
 Проверяем доступность:
 ```
-ping au.team
-nslookup _ldap._tcp.au.team
+ping au-team.irpo
+nslookup _ldap._tcp.au-team.irpo
 ```
 Устанавливаем пакеты (Если при установке выбрали все что связано с доменами, то не нужно, если нет графики, то нужно):
 ```
@@ -857,17 +871,17 @@ apt-get install realmd sssd sssd-tools adcli krb5-workstation samba-common-tools
 
 Вводим все как на скрине в Active Directory и жмем кнопку применить снизу, система попросит ввести учетку админа домена
 
-<img width="1284" height="739" alt="image" src="https://github.com/user-attachments/assets/e9de9b3a-3e0f-4586-90a8-813e04cb8595" />
+<img width="699" height="243" alt="image" src="https://github.com/user-attachments/assets/a3d20dfd-2e58-4297-8f1f-111efa25542c" />
 
 ### на устройствах без графики:
 
 После установки пакетов обнаруживаем домен:
 ```
-realm discover au.team
+realm discover au-team.irpo
 ```
 Заходим в домен:
 ```
-realm join -U Administrator au.team
+realm join -U Administrator au-team.irpo
 ```
 ### Настраиваем группу hq на hq-cli:
 Задаем права на sudo:
@@ -995,6 +1009,16 @@ mdadm --detail --scan --verbose /dev/md0 > /etc/mdadm.conf
 echo '/dev/md0 /raid ext4 defaults 0 0' >> /etc/fstab
 mount /dev/md0 /raid
 ```
+Проверяем массив:
+```
+df -h
+cat /proc/mdstat
+```
+
+<img width="749" height="213" alt="image" src="https://github.com/user-attachments/assets/e4cab274-eae9-4971-bbbc-4ff5427228c7" />
+
+<img width="436" height="107" alt="image" src="https://github.com/user-attachments/assets/cd69c065-0d88-4f8d-af22-d437c081fd42" />
+
  </details>
 
  ## Настройте сервер сетевой файловой системы (nfs) на HQ-SRV
@@ -1074,79 +1098,7 @@ echo '192.168.1.62:/raid/nfs /mnt/nfs nfs auto 0 0 ' >> /etc/fstab
 
  <details>
     <summary>НАЖМИ</summary>
- 
-Настраиваем маршрутизацию до ISP:
-### ISP:
-Устанавливаем frr:
-```
-apt-get install frr -y
-```
-Включаем OSPF в конфиге /etc/frr/daemons:
-
-<img width="863" height="684" alt="image" src="https://github.com/user-attachments/assets/889ab48a-5ad0-45ea-ae7e-e93045da4910" />
-
-Запускаем frr:
-```
-systemctl enable --now frr
-```
-Переходим в консоль frr:
-```
-vtysh
-```
-Настраиваем настройки в терминале:
-```
-conf t
-router ospf
-passive-interface default
-network 192.168.1.0/26 area 0
-network 192.168.2.0/28 area 0
-network 10.10.10.0/30 area 0
-network 172.16.1.0/28 area 0
-network 172.16.2.0/28 area 0
-area 0 authentication
-exit
-```
-Настраиваем интерфейсы(ens37, ens38):
-```
-interface ens37
-no ip ospf network broadcast
-no ip ospf passive
-ip ospf authentication
-ip ospf authentication-key password
-exit
-```
-Не забываем сохранить изменения (как в циске):
-```
-write
-```
-Перезапускаем frr:
-```
-systemctl restart frr
-```
-### HQ-RTR и BR-RTR:
-
-В frr необходимо добавить сети ISP:
-```
-vtysh
-conf t
-router ospf
-network 172.16.1.0/28 area 0
-network 172.16.2.0/28 area 0
-ex
-interface ens33
-no ip ospf network broadcast
-no ip ospf passive
-ip ospf authentication
-ip ospf authentication-key password
-exit
-do wr
-```
-Перезапускаем frr:
-```
-systemctl restart frr
-```
-### Настраиваем chrony на ISP:
-
+  
 Устанавливаем Chrony:
 ```
 apt-get install chrony -y
@@ -1226,9 +1178,8 @@ pong на команду ping в ansible посланную с BR-SRV.
 ```
 apt-get install ansible -y
 ```
-Заходим под sshuser и генерируем ключи, которые будут расположены в /home/sshuser/.ssh:
+Генерируем ключи для беспарольной авторизации, которые будут расположены в /home/sshuser/.ssh:
 ```
-ssh -p 2026 sshuser@192.168.2.14
 ssh-keygen
 ```
 Отправляем открытый ключ на другие хосты (Для начала необходимо настроить ssh где не настроен) (Смотрите на порты, у меня по итогу не оч заработало если везде 2026):
@@ -1746,11 +1697,7 @@ echo "Sample image 2" > ~/web/images/image2.txt
 ```
 Устанавливаем необходимое ПО:
 ```
-apt-get update
-apt-get install apache2 -y
-apt-get install mariadb-server mariadb-client -y
-apt-get install php8.2 php8.2-mysqli php8.2-mysqlnd apache2-mod_php8.2 -y
-apt-get install php8.2-pdo php8.2-pdo_mysql -y
+apt-get update && apt-get install apache2 mariadb-server mariadb-client php8.2 php8.2-mysqli php8.2-mysqlnd apache2-mod_php8.2 php8.2-pdo php8.2-pdo_mysql -y
 ```
 Запускаем MariaDB:
 ```
@@ -1845,7 +1792,7 @@ ls -la /etc/httpd2/conf/sites-enabled/
 vim /etc/httpd2/conf/sites-available/default.conf
 ```
 ```
-DocumentRoot /etc/httpd2/htdocs
+DocumentRoot "/etc/httpd2/htdocs"
 <Directory /etc/httpd2/htdocs>
     Options Indexes FollowSymLinks
     AllowOverride All
@@ -1955,16 +1902,17 @@ iptables-save > /etc/iptables/rules.v4
 
 На BR-RTR:
 ```
-iptables -t nat -A PREROUTING -i ens33-p tcp --dport 8080 -j DNAT --to-destination 192.168.2.14:8080
+iptables -t nat -A PREROUTING -i ens33 -p tcp --dport 8080 -j DNAT --to-destination 192.168.2.14:8080
 iptables -t nat -A PREROUTING -i ens33 -p tcp --dport 2026 -j DNAT --to-destination 192.168.2.14:2026
-sysctl -p iptables-save > /etc/iptables/rules.v4
+sysctl -p
+iptables-save > /etc/iptables/rules.v4
 ```
 На HQ-RTR:
 ```
-iptables -t nat -A PREROUTING -i ens33-p tcp --dport 8080 -j DNAT --to-destination 192.168.2.62:8080
+iptables -t nat -A PREROUTING -i ens33 -p tcp --dport 8080 -j DNAT --to-destination 192.168.1.62:8080
 iptables -t nat -A PREROUTING -i ens33 -p tcp --dport 2026 -j DNAT --to-destination 192.168.1.62:2026
 sysctl -p
- iptables-save > /etc/iptables/rules.v4
+iptables-save > /etc/iptables/rules.v4
 ```
 Проверяем ssh на HQ-CLI (должны подключиться к BR-SRV):
 ```
@@ -1989,8 +1937,6 @@ ssh -p 2026 sshuser@172.16.2.2
 <details>
     <summary>НАЖМИ</summary>
 
-### Чтобы ISP видел HQ-SRV нужно прокинуть на него frr, а если прокинуть на него маршрутизацию, то вся сеть начинает невероятно плохо работать, так что на свой страх и риск
-
 Устанавливаем nginx:
 ```
 apt-get install nginx -y
@@ -1999,37 +1945,58 @@ apt-get install nginx -y
 ```
 systemctl enable --now nginx
 ```
-Редачим /etc/nginx/nginx.conf (Вставляем перед последней скобкой, иначе nginx будет жаловаться на синтаксис):
+Создаем /etc/nginx/sites-available.d/proxy.conf:
 ```
-server
-{
-listen 80;
-server_name web.au.team;
-location / {
-proxy_pass http://192.168.1.62:80;
-}
+server {
+    listen 80;
+    server_name web.au-team.irpo;
+
+    location / {
+        proxy_pass http://192.168.1.62:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }
 server {
-listen 80;
-server_name docker;
-location / {
-proxy_pass http://192.168.2.14:8080;
-}
+    listen 80;
+    server_name docker.au-team.irpo;
+
+    location / {
+        proxy_pass http://192.168.2.14:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }
 ```
-
-<img width="991" height="701" alt="image" src="https://github.com/user-attachments/assets/e6e43ee4-1744-4e2a-851b-0df2811207bb" />
-
-Проверяем конфиг и перезапускаем:
+Включаем:
+```
+ln -s /etc/nginx/sites-available.d/proxy.conf /etc/nginx/sites-enabled.d/
+```
+Проверяем и перезапускаем:
 ```
 nginx -t
 systemctl restart nginx
 ```
-### Должно получиться так (Может долго очень грузится и не на всех хостах и причина этому скорее всего - ISP, маршрутизация начинает очень плохо работать с 3 включенным роутером):
+На клиентах добавляем строчку в /etc/hosts:
+```
+192.168.189.131 web.au-team.irpo docker.au-team.irpo
+```
+### Должно получиться так:
 
 <img width="1721" height="949" alt="image" src="https://github.com/user-attachments/assets/8eb0e1c3-0b27-4ad5-8247-2e5bd164175b" />
 
 <img width="1718" height="951" alt="image" src="https://github.com/user-attachments/assets/3e9ae7fd-29c0-43d5-9350-53b20178918a" />
+
+### Если не открывается что то, то скорее всего порт занят на ISP, проверяем порты и убиваем процессы:
+```
+ss -tlnp | grep :8080
+```
+
+<img width="831" height="162" alt="image" src="https://github.com/user-attachments/assets/2f8a938c-be92-466c-b917-16da0efdc73e" />
 
  </details>
 
@@ -2065,13 +2032,13 @@ chown root:root /etc/nginx/.htpasswd
 chmod 644 /etc/nginx/.htpasswd
 ```
 
-Редактируем конфигурацию /etc/nginx/sites-available.d/web.au.team:
+Редактируем конфигурацию /etc/nginx/sites-available.d/proxy.conf:
 ```
 server {
     listen 80;
-    server_name web.au.team;
-    access_log /var/log/nginx/web.au.team.access.log;
-    error_log /var/log/nginx/web.au.team.error.log;
+    server_name web.au-team.irpo;
+    access_log /var/log/nginx/web.au-team.irpo.access.log;
+    error_log /var/log/nginx/web.au-team.irpo.error.log;
     location / {
         auth_basic "Restricted Access - Please Login";
         auth_basic_user_file /etc/nginx/.htpasswd;
@@ -2090,20 +2057,12 @@ server {
 ```
 Создаем симлинк в sites-enabled.d:
 ```
-ln -s /etc/nginx/sites-available.d/web.au.team /etc/nginx/sites-enabled.d/
+ln -s /etc/nginx/sites-available.d/proxy.conf /etc/nginx/sites-enabled.d/
 ```
 Проверяем синтаксис и перезапускаем nginx:
 ```
 nginx -t
 systemctl restart nginx
-```
-На клиентской машине, с которой будете тестировать, добавьте:
-```
-echo "192.168.131.189 web.au.team" >> /etc/hosts
-```
-На DNS-сервере добавьте A-запись:
-```
-web.au.team. IN A 192.168.131.189
 ```
 Включаем форвардинг пакетов:
 ```
@@ -2124,6 +2083,26 @@ iptables-save > /etc/iptables/rules.v4
 
 </details>
 
+##   Удобным способом установите приложение Яндекс Браузер на HQ-CLI
+<details>
+    <summary>ЗАДАНИЕ</summary>
+
+Установку браузера отметьте в отчёте.
+
+ </details>
+<details>
+    <summary>НАЖМИ</summary>
+
+### Установка через терминал:
+```
+apt-get update && apt-get install yandex-browser-stable
+```
+### Установка через менеджер пакетов:
+
+<img width="1265" height="840" alt="image" src="https://github.com/user-attachments/assets/2cdfee3c-f0aa-417f-ab6a-64475f4dbd81" />
+
+ </details>
+ 
 # Модуль 3
 ##  Выполните импорт пользователей в домен au-team.irpo
 <details>
@@ -2143,23 +2122,23 @@ iptables-save > /etc/iptables/rules.v4
 ```
 systemctl status samba
 samba-tool domain level show
-kinit administrator@AU.TEAM
+kinit administrator@AU-TEAM.IRPO
 klist
 ```
 Создаем users.csv (если нет)(ПРОБЕЛОВ БЫТЬ НЕ ДОЛЖНО):
 ```
 cat > /tmp/users.csv << 'EOF'
 login,password,givenname,surname,department,mail
-ivanov,P@ssw0rd,Ivan,Ivanov,IT,ivan.ivanov@au.team
-petrov,P@ssw0rd,Petr,Petrov,Sales,petr.petrov@au.team
-sidorov,P@ssw0rd,Sidor,Sidorov,HR,sidor.sidorov@au.team
-smirnova,P@ssw0rd,Anna,Smirnova,Finance,anna.smirnova@au.team
-kuznetsov,P@ssw0rd,Nikolai,Kuznetsov,IT,nikolai.kuznetsov@au.team
-popova,P@ssw0rd,Elena,Popova,Marketing,elena.popova@au.team
-volkov,P@ssw0rd,Alexey,Volkov,Sales,alexey.volkov@au.team
-sokolov,P@ssw0rd,Dmitry,Sokolov,IT,dmitry.sokolov@au.team
-morozova,P@ssw0rd,Olga,Morozova,HR,olga.morozova@au.team
-novikov,P@ssw0rd,Michael,Novikov,Finance,michael.novikov@au.team
+ivanov,P@ssw0rd,Ivan,Ivanov,IT,ivan.ivanov@au-team.irpo
+petrov,P@ssw0rd,Petr,Petrov,Sales,petr.petrov@au-team.irpo
+sidorov,P@ssw0rd,Sidor,Sidorov,HR,sidor.sidorov@au-team.irpo
+smirnova,P@ssw0rd,Anna,Smirnova,Finance,anna.smirnova@au-team.irpo
+kuznetsov,P@ssw0rd,Nikolai,Kuznetsov,IT,nikolai.kuznetsov@au-team.irpo
+popova,P@ssw0rd,Elena,Popova,Marketing,elena.popova@au-team.irpo
+volkov,P@ssw0rd,Alexey,Volkov,Sales,alexey.volkov@au-team.irpo
+sokolov,P@ssw0rd,Dmitry,Sokolov,IT,dmitry.sokolov@au-team.irpo
+morozova,P@ssw0rd,Olga,Morozova,HR,olga.morozova@au-team.irpo
+novikov,P@ssw0rd,Michael,Novikov,Finance,michael.novikov@au-team.irpo
 EOF
 ```
 Создаем скрипт для импорта юзеров /root/import_users.sh:
@@ -2176,7 +2155,7 @@ NC='\033[0m'
 
 # Configuration
 INPUT_FILE="/tmp/users.csv"
-DOMAIN="au.team"
+DOMAIN="au-team.irpo"
 SEPARATOR=","
 LOG_FILE="/var/log/import_users_$(date +%Y%m%d_%H%M%S).log"
 PASSWORD="P@ssw0rd"
@@ -2449,12 +2428,11 @@ touch ~/ca/index.txt
 echo 1000 > ~/ca/serial
 ```
 Редачим конфиг /var/lib/ssl/openssl.cnf:
-```
 
 <img width="663" height="892" alt="image" src="https://github.com/user-attachments/assets/1d5eab13-0e47-4855-8481-efd711c2d501" />
 
 <img width="704" height="835" alt="image" src="https://github.com/user-attachments/assets/660ab021-aa65-46e3-b3c7-f3842010b084" />
-```
+
 Проверяем конфиг:
 ```
 openssl version -d
@@ -2464,69 +2442,69 @@ openssl ciphers -v
 ```
 cd ~/ca
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
-  -out private/ca.key.pem
+-out private/ca.key.pem
 chmod 400 private/ca.key.pem
 
 openssl req -x509 -new -key private/ca.key.pem \
-  -days 30 -sha256 \
-  -subj "/C=RU/ST=Moscow/L=Moscow/O=MyCompany/CN=HQ-CA/emailAddress=admin@au.team" \
-  -out certs/ca.cert.pem
+-days 30 -sha256 \
+-subj "/C=RU/ST=Moscow/L=Moscow/O=MyCompany/CN=HQ-CA/emailAddress=admin@au-team.irpo" \
+-out certs/ca.cert.pem
   
 openssl x509 -in certs/ca.cert.pem -text -noout | grep -E "Issuer:|Subject:|Not Before|Not After"
 ```
-Создаем сертификаты для HQ-SRV и BR-SRV (вводить построчно):
+Создаем сертификаты для HQ-SRV и BR-SRV:
 ```
 cd ~/ca
 
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
-  -out private/web.au.team.key.pem
-chmod 400 private/web.au.team.key.pem
+-out private/web.au-team.irpo.key.pem
+chmod 400 private/web.au-team.irpo.key.pem
 
-openssl req -new -key private/web.au.team.key.pem \
-  -subj "/C=RU/ST=Moscow/L=Moscow/O=MyCompany/CN=web.au.team/emailAddress=admin@au.team" \
-  -out web.au.team.csr
+openssl req -new -key private/web.au-team.irpo.key.pem \
+-subj "/C=RU/ST=Moscow/L=Moscow/O=MyCompany/CN=web.au-team.irpo/emailAddress=admin@au-team.irpo" \
+-out web.au-team.irpo.csr
 
-openssl x509 -req -in web.au.team.csr \
-  -CA certs/ca.cert.pem -CAkey private/ca.key.pem \
-  -CAcreateserial -out certs/web.au.team.cert.pem \
-  -days 30 -sha256
+openssl x509 -req -in web.au-team.irpo.csr \
+-CA certs/ca.cert.pem -CAkey private/ca.key.pem \
+-CAcreateserial -out certs/web.au-team.irpo.cert.pem \
+-days 30 -sha256
 
-openssl verify -CAfile certs/ca.cert.pem certs/web.au.team.cert.pem
+openssl verify -CAfile certs/ca.cert.pem certs/web.au-team.irpo.cert.pem
 
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
-  -out private/docker.au.team.key.pem
-chmod 400 private/docker.au.team.key.pem
+-out private/docker.au-team.irpo.key.pem
+chmod 400 private/docker.au-team.irpo.key.pem
 
-openssl req -new -key private/docker.au.team.key.pem \
-  -subj "/C=RU/ST=Moscow/L=Moscow/O=MyCompany/CN=docker.au.team/emailAddress=admin@au.team" \
-  -out docker.au.team.csr
+openssl req -new -key private/docker.au-team.irpo.key.pem \
+-subj "/C=RU/ST=Moscow/L=Moscow/O=MyCompany/CN=docker.au-team.irpo/emailAddress=admin@au-team.irpo" \
+-out docker.au-team.irpo.csr
 
-openssl x509 -req -in docker.au.team.csr \
-  -CA certs/ca.cert.pem -CAkey private/ca.key.pem \
-  -CAcreateserial -out certs/docker.au.team.cert.pem \
-  -days 30 -sha256
+openssl x509 -req -in docker.au-team.irpo.csr \
+-CA certs/ca.cert.pem -CAkey private/ca.key.pem \
+-CAcreateserial -out certs/docker.au-team.irpo.cert.pem \
+-days 30 -sha256
 
-openssl verify -CAfile certs/ca.cert.pem certs/docker.au.team.cert.pem
+openssl verify -CAfile certs/ca.cert.pem certs/docker.au-team.irpo.cert.pem
 ```
 Устанавливаем сертификат на HQ-SRV:
 ```
 mkdir -p /etc/apache2/ssl
-cp ~/ca/certs/web.au.team.cert.pem /etc/apache2/ssl/
-cp ~/ca/private/web.au.team.key.pem /etc/apache2/ssl/
+cp ~/ca/certs/web.au-team.irpo.cert.pem /etc/apache2/ssl/
+cp ~/ca/private/web.au-team.irpo.key.pem /etc/apache2/ssl/
 cp ~/ca/certs/ca.cert.pem /etc/apache2/ssl/
 a2enmod ssl
 ```
-Подгатавливаем и отправляем архивы для BR-SRV и HQ-RTR:
+Подгатавливаем и отправляем архивы для BR-SRV и ISP:
 ```
 cd ~/ca
-tar -czf docker_certs.tar.gz certs/docker.au.team.cert.pem private/docker.au.team.key.pem certs/ca.cert.pem
+tar -czf docker_certs.tar.gz certs/docker.au-team.irpo.cert.pem private/docker.au-team.irpo.key.pem certs/ca.cert.pem
 scp -P 2026 docker_certs.tar.gz sshuser@192.168.2.14:/tmp/
-tar -czf hq-rtr_certs.tar.gz certs/ca.cert.pem
-scp -P 2026 hq-rtr_certs.tar.gz sshuser@192.168.1.1:/tmp/
-cp /root/ca/certs/web.au.team.cert.pem /home/sshuser/
-cp /root/ca/private/web.au.team.key.pem /home/sshuser/
-cp /root/ca/certs/docker.au.team.cert.pem /home/sshuser/
-cp /root/ca/private/docker.au.team.key.pem /home/sshuser/
+tar -czf isp_certs.tar.gz certs/ca.cert.pem
+scp isp_certs.tar.gz sshuser@192.168.189.131:/tmp/
+cp /root/ca/certs/web.au-team.irpo.cert.pem /home/sshuser/
+cp /root/ca/private/web.au-team.irpo.key.pem /home/sshuser/
+cp /root/ca/certs/docker.au-team.irpo.cert.pem /home/sshuser/
+cp /root/ca/private/docker.au-team.irpo.key.pem /home/sshuser/
 chown sshuser:sshuser /home/sshuser/*.pem
 ```
 На BR-SRV распаковываем:
@@ -2534,42 +2512,42 @@ chown sshuser:sshuser /home/sshuser/*.pem
 cd /tmp
 tar -xzf docker_certs.tar.gz
 mkdir -p /etc/nginx/ssl
-cp certs/docker.au.team.cert.pem /etc/nginx/ssl/
+cp certs/docker.au-team.irpo.cert.pem /etc/nginx/ssl/
 cp certs/ca.cert.pem /etc/nginx/ssl/
-cp private/docker.au.team.key.pem /etc/nginx/ssl/
+cp private/docker.au-team.irpo.key.pem /etc/nginx/ssl/
 chmod 644 /etc/nginx/ssl/*.pem
-chmod 600 /etc/nginx/ssl/docker.au.team.key.pem
+chmod 600 /etc/nginx/ssl/docker.au-team.irpo.key.pem
 ls -la /etc/nginx/ssl/
 ```
-На HQ-RTR распаковываем:
+На ISP распаковываем:
 ```
 cd /tmp
-tar -xzf hq-rtr_certs.tar.gz
+tar -xzf isp_certs.tar.gz
 mkdir -p /etc/nginx/ssl
 cp certs/ca.cert.pem /etc/nginx/ssl/
-scp -P 2026 sshuser@192.168.1.62:/home/sshuser/web.au.team.cert.pem /tmp/
-scp -P 2026 sshuser@192.168.1.62:/home/sshuser/web.au.team.key.pem /tmp/
-scp -P 2026 sshuser@192.168.1.62:/home/sshuser/docker.au.team.cert.pem /tmp/
-scp -P 2026 sshuser@192.168.1.62:/home/sshuser/docker.au.team.key.pem /tmp/
-cp /tmp/web.au.team.cert.pem /etc/nginx/ssl/
-cp /tmp/web.au.team.key.pem /etc/nginx/ssl/
-cp /tmp/docker.au.team.cert.pem /etc/nginx/ssl/
-cp /tmp/web.docker.team.key.pem /etc/nginx/ssl/
+scp -P 2026 sshuser@192.168.1.62:/home/sshuser/web.au-team.irpo.cert.pem /tmp/
+scp -P 2026 sshuser@192.168.1.62:/home/sshuser/web.au-team.irpo.key.pem /tmp/
+scp -P 2026 sshuser@192.168.1.62:/home/sshuser/docker.au-team.irpo.cert.pem /tmp/
+scp -P 2026 sshuser@192.168.1.62:/home/sshuser/docker.au-team.irpo.key.pem /tmp/
+cp /tmp/web.au-team.irpo.cert.pem /etc/nginx/ssl/
+cp /tmp/web.au-team.irpo.key.pem /etc/nginx/ssl/
+cp /tmp/docker.au-team.irpo.cert.pem /etc/nginx/ssl/
+cp /tmp/docker.au-team.irpo.key.pem /etc/nginx/ssl/
 ```
-На HQ-RTR редактируем nginx /etc/nginx/nginx.conf:
+На ISP редактируем nginx /etc/nginx/sites-available.d/proxy.conf:
 ```
 server {
     listen 80;
-    server_name web.au.team;
+    server_name web.au-team.irpo;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl;
-    server_name web.au.team;
+    server_name web.au-team.irpo;
     
-    ssl_certificate /etc/nginx/ssl/web.au.team.cert.pem;
-    ssl_certificate_key /etc/nginx/ssl/web.au.team.key.pem;
+    ssl_certificate /etc/nginx/ssl/web.au-team.irpo.cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/web.au-team.irpo.key.pem;
     ssl_trusted_certificate /etc/nginx/ssl/ca.cert.pem;
     
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -2585,16 +2563,16 @@ server {
 }
 server {
     listen 80;
-    server_name docker.au.team;
+    server_name docker.au-team.irpo;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl;
-    server_name docker.au.team;
+    server_name docker.au-team.irpo;
     
-    ssl_certificate /etc/nginx/ssl/docker.au.team.cert.pem;
-    ssl_certificate_key /etc/nginx/ssl/docker.au.team.key.pem;
+    ssl_certificate /etc/nginx/ssl/docker.au-team.irpo.cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/docker.au-team.irpo.key.pem;
     ssl_trusted_certificate /etc/nginx/ssl/ca.cert.pem;
     
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -2609,7 +2587,7 @@ server {
     }
 }
 ```
-Устанавливаем доверие на HQ-CLI:
+Устанавливаем доверие для HQ-CLI (На HQ-SRV):
 ```
 cp ~/ca/certs/ca.cert.pem ~/ca/certs/CA-HQ.crt
 scp -P 2026 ~/ca/certs/CA-HQ.crt sshuser@192.168.1.3:/tmp/
@@ -2621,9 +2599,9 @@ update-ca-trust
 ```
 Проверяем:
 ```
-curl -I https://web.au.team
-curl -I https://docker.au.team
-openssl s_client -connect web.au.team:443 -showcerts < /dev/null 2>/dev/null | openssl x509 -text | grep -E "Issuer:|Subject:|Not Before|Not After"
+curl -I https://web.au-team.irpo
+curl -I https://docker.au-team.irpo
+openssl s_client -connect web.au-team.irpo:443 -showcerts < /dev/null 2>/dev/null | openssl x509 -text | grep -E "Issuer:|Subject:|Not Before|Not After"
 ```
 
  </details>
@@ -2706,12 +2684,12 @@ chown root:root /etc/strongswan/ipsec.secrets
 ```
 Настраиваем Iptables на обоих роутерах:
 ```
-iptables -I INPUT -i ens33 -p gre -j ACCEPT
-iptables -I OUTPUT -o ens33 -p gre -j ACCEPT
-iptables -I INPUT -i ens33 -p udp --dport 500 -j ACCEPT
-iptables -I INPUT -i ens33 -p udp --dport 4500 -j ACCEPT
-iptables -I INPUT -i ens33 -p esp -j ACCEPT
-iptables -I INPUT -i ens33 -p ah -j ACCEPT
+iptables -I INPUT -i tun1 -p gre -j ACCEPT
+iptables -I OUTPUT -o tun1 -p gre -j ACCEPT
+iptables -I INPUT -i tun1 -p udp --dport 500 -j ACCEPT
+iptables -I INPUT -i tun1 -p udp --dport 4500 -j ACCEPT
+iptables -I INPUT -i tun1 -p esp -j ACCEPT
+iptables -I INPUT -i tun1 -p ah -j ACCEPT
 iptables-save > /etc/iptables/rules.v4
 ```
 Настраиваем OSPF:
@@ -2750,7 +2728,7 @@ systemctl status strongswan-starter
 ipsec status
 ```
 
-<img width="816" height="88" alt="image" src="https://github.com/user-attachments/assets/6b437d94-946f-444d-92e0-7c7210086f83" />
+<img width="780" height="108" alt="image" src="https://github.com/user-attachments/assets/1918b0cb-fc96-4fc5-bfc5-f33d9bfad6b9" />
 
  </details>
 
@@ -2840,8 +2818,7 @@ iptables-save > /etc/iptables/rules.v4
 
 Устанавливаем cups:
 ```
-apt-get update
-apt-get install cups cups-pdf
+apt-get update && apt-get install cups cups-pdf
 ```
 Создаем группу и добавляем туда юзера (после этого необходимо перелогиниться):
 ```
@@ -2855,24 +2832,26 @@ lpinfo --make-and-model "PDF" -m
 Настраиваем доступ в консоль и запускаем cups:
 ```
 cupsctl --remote-admin
-sudo systemctl restart cups
-sudo systemctl enable cups
-sudo systemctl status cups
+systemctl restart cups
+systemctl enable cups
+systemctl status cups
 ```
 Открываем в браузере (login - root, passwd - toor):
 ```
 http://localhost:631/admin
 ```
 Жмем:
-```
-Добавить принтер
-CUPS-PDF (Virtual PDF Printer)
-Название Virtual_PDF
-Расположение hq-srv
-Разрешить совместный доступ
-Создать: Generic
-Модель: Generic CUPS-PDF Printer (w/ options) (en)
-```
+
+<img width="1718" height="869" alt="image" src="https://github.com/user-attachments/assets/8e91bc3d-f36b-4f85-837a-b25b09461407" />
+
+<img width="684" height="459" alt="image" src="https://github.com/user-attachments/assets/06e67cab-4496-41df-a5b3-8353d0e9d294" />
+
+<img width="829" height="421" alt="image" src="https://github.com/user-attachments/assets/adac98ae-99ca-4a5b-9d5f-f01b6f4ca840" />
+
+<img width="658" height="632" alt="image" src="https://github.com/user-attachments/assets/62ec747f-d6d4-4c9d-b04f-18c82063d1b7" />
+
+<img width="920" height="629" alt="image" src="https://github.com/user-attachments/assets/290ecc0a-fc4d-41f8-833d-4592f7dba7a0" />
+
 Назначаем принтер по умолчанию:
 ```
 lpadmin -d Virtual_PDF
@@ -2893,14 +2872,13 @@ systemctl restart cups
 ```
 echo "Test print job" > ~/test.txt
 lp -d Virtual_PDF ~/test.txt
-ls -la root/PDF/
+ls -la /root/PDF/
 ```
 ### Должен появится файл test_job.pdf
 
 На HQ-CLI устанавливаем cups:
 ```
-apt-get update
-apt-get install cups cups-filters cups-pk-helper
+apt-get update && apt-get install cups cups-filters cups-pk-helper
 ```
 Создаем директорию для печати:
 ```
@@ -2913,7 +2891,7 @@ cat ~/.cups/client.conf
 ```
 Проверяем доступность:
 ```
-curl -I http://192.168.1.100:631
+curl -I http://192.168.1.62:631
 lpstat -s
 ```
 Устанавливаем как принтер по умолчанию:
@@ -2946,19 +2924,23 @@ Listen 0.0.0.0:631
   Order allow,deny
   Allow localhost
   Allow 192.168.1.0/26
+  Allow All
   AuthType None
+  Satisfy Any
 </Location>
 <Location /printers>
   Order allow,deny
   Allow localhost
   Allow 192.168.1.0/26
   AuthType None
+  Satisfy Any
 </Location>
 <Location /printers/Virtual_PDF>
   Order allow,deny
   Allow localhost
   Allow 192.168.1.0/26
   AuthType None
+  Satisfy Any
 </Location>
 EOF
 lpadmin -x Virtual_PDF 2>/dev/null
@@ -3047,7 +3029,7 @@ ls -la /var/spool/cups-pdf/ANONYMOUS/
  <details>
     <summary>НАЖМИ</summary>
   
-### Настраиваем HQ-RTR:
+### Настраиваем HQ-SRV:
 Устанавливаем rsyslog:
 ```
 apt-get update && apt-get install rsyslog -y
@@ -3104,10 +3086,10 @@ netstat -tulpn | grep 514
 ### Возможно придется добавить правило в iptables на роутерах:
 ```
 iptables -t nat -L PREROUTING -n -v | grep 514
-iptables -I FORWARD -s 192.168.2.14 -d 192.168.1.62 -p upd --dport 514 -j ACCEPT
-iptabes -I FORWARD -s 192.168.1.62 -d 192.168.2.14 -p udp --sport 514 -j ACCEPT
+iptables -I FORWARD -s 192.168.2.14 -d 192.168.1.62 -p udp --dport 514 -j ACCEPT
+iptables -I FORWARD -s 192.168.1.62 -d 192.168.2.14 -p udp --sport 514 -j ACCEPT
 iptables -I FORWARD -p tcp --dport 514 -j ACCEPT
-iptabes -I FORWARD -p udp --dport 514 -j ACCEPT
+iptables -I FORWARD -p udp --dport 514 -j ACCEPT
 iptables-save > /etc/iptables/rules.v4
 ```
 
@@ -3143,6 +3125,7 @@ EOF
 ```
 rsyslogd -N1
 systemctl restart rsyslog
+systemctl enable rsyslog
 systemctl status rsyslog --no-pager -l
 ```
 Проверяем отправку:
